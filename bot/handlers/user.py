@@ -1,14 +1,15 @@
 """Foydalanuvchi handlerlari: /start, profil, referal, promokod, buyurtmalar."""
 from __future__ import annotations
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.config import settings
 from bot.database import db
-from bot.keyboards.kb import cancel_kb, main_menu
+from bot.keyboards.kb import cancel_kb, main_menu, tasks_list_kb
 from bot.utils.states import PromoState
 
 router = Router()
@@ -81,6 +82,7 @@ async def profile(message: Message):
         f"👤 <b>Profil</b>\n\n"
         f"🆔 ID: <code>{user.id}</code>\n"
         f"💰 Bonus balans: <b>{user.balance:,} so'm</b>\n"
+        f"⭐ Bonus Stars: <b>{user.stars_balance}</b>\n"
         f"👥 Taklif qilganlar: <b>{refs} ta</b>\n",
     )
 
@@ -95,10 +97,12 @@ async def referral(message: Message):
     link = f"https://t.me/{me.username}?start=ref_{user.id}"
     refs = await db.count_referrals(user.id)
     ref_stars = await db.get_referral_stars()
+    threshold = await db.get_referral_task_threshold()
     if ref_stars > 0:
         reward_line = (
-            f"Do'stlaringizni taklif qiling — ularning har biri birinchi buyurtma "
-            f"qilganda sizga <b>{ref_stars} Stars</b> qiymatida bonus beriladi! ⭐"
+            f"Do'stlaringizni taklif qiling! Taklif qilgan odamingiz "
+            f"<b>{threshold} ta zadaniya</b> (Stars ishlash) bajarsa, sizga "
+            f"<b>{ref_stars} ⭐</b> bonus beriladi."
         )
     else:
         reward_line = (
@@ -110,7 +114,8 @@ async def referral(message: Message):
         f"{reward_line}\n\n"
         f"🔗 Sizning havolangiz:\n<code>{link}</code>\n\n"
         f"👤 Taklif qilganlaringiz: <b>{refs} ta</b>\n"
-        f"💰 Jami bonus balans: <b>{user.balance:,} so'm</b>",
+        f"⭐ Bonus Stars: <b>{user.stars_balance}</b>\n"
+        f"💰 Bonus balans: <b>{user.balance:,} so'm</b>",
     )
 
 
@@ -145,6 +150,100 @@ async def help_msg(message: Message):
         "5️⃣ Stars avtomatik yetkaziladi ✅\n\n"
         "❓ Muammo bo'lsa, administratorga murojaat qiling."
     )
+
+
+# ---------- Stars ishlash (zadaniya) ----------
+@router.message(F.text == "🌟 Stars ishlash")
+async def earn_stars(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user:
+        await message.answer("Iltimos, /start bosing.")
+        return
+    tasks = await db.get_active_tasks()
+    # foydalanuvchi allaqachon bajargan zadaniyalarni chiqarib tashlaymiz
+    available = []
+    for t in tasks:
+        if not await db.has_completed_task(t.id, message.from_user.id):
+            available.append(t)
+    if not available:
+        await message.answer(
+            "🌟 <b>Stars ishlash</b>\n\n"
+            "Hozircha siz uchun yangi zadaniya yo'q. Keyinroq qayta tekshiring! 😊\n\n"
+            f"⭐ Sizning Stars balansingiz: <b>{user.stars_balance}</b>"
+        )
+        return
+    await message.answer(
+        "🌟 <b>Stars ishlash</b>\n\n"
+        "Quyidagi kanallarga obuna bo'ling va «✅ Tekshirish» tugmasini bosing — "
+        "obuna tasdiqlansa, Stars hisobingizga qo'shiladi.\n\n"
+        f"⭐ Sizning Stars balansingiz: <b>{user.stars_balance}</b>",
+        reply_markup=tasks_list_kb(available),
+    )
+
+
+@router.callback_query(F.data.startswith("task:check:"))
+async def task_check(call: CallbackQuery, bot: Bot):
+    task_id = int(call.data.split(":")[2])
+    task = await db.get_task(task_id)
+    if not task or not task.is_active:
+        await call.answer("Bu zadaniya mavjud emas.", show_alert=True)
+        return
+    if await db.has_completed_task(task_id, call.from_user.id):
+        await call.answer("Siz bu zadaniyani allaqachon bajargansiz.", show_alert=True)
+        return
+
+    chat_id: int | str = (
+        int(task.channel_id)
+        if isinstance(task.channel_id, str) and task.channel_id.lstrip("-").isdigit()
+        else task.channel_id
+    )
+    try:
+        member = await bot.get_chat_member(chat_id=chat_id, user_id=call.from_user.id)
+    except (TelegramBadRequest, TelegramForbiddenError):
+        await call.answer(
+            "❌ Obunani tekshirib bo'lmadi. Iltimos, administratorga murojaat qiling "
+            "(bot kanalda admin bo'lishi kerak).",
+            show_alert=True,
+        )
+        return
+
+    status = getattr(member, "status", None)
+    status = getattr(status, "value", status)  # enum bo'lsa qiymatini olamiz
+    subscribed = status in ("member", "administrator", "creator", "owner")
+    if not subscribed:
+        await call.answer(
+            "❌ Siz hali obuna bo'lmagansiz. Avval kanalga obuna bo'ling, keyin qayta tekshiring.",
+            show_alert=True,
+        )
+        return
+
+    credited = await db.complete_task_if_new(task_id, call.from_user.id, task.reward_stars)
+    if not credited:
+        await call.answer("Siz bu zadaniyani allaqachon bajargansiz.", show_alert=True)
+        return
+
+    balance = await db.get_stars_balance(call.from_user.id)
+    await call.answer(f"✅ +{task.reward_stars} ⭐ qo'shildi!", show_alert=True)
+    try:
+        await call.message.answer(
+            f"🎉 Zadaniya bajarildi! <b>+{task.reward_stars} ⭐</b> qo'shildi.\n"
+            f"⭐ Umumiy Stars balansingiz: <b>{balance}</b>"
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Referal zadaniya chegarasi bonusi
+    reward = await db.maybe_reward_referrer_for_tasks(call.from_user.id)
+    if reward:
+        referrer_id, reward_stars = reward
+        try:
+            await bot.send_message(
+                referrer_id,
+                f"🎉 +{reward_stars} ⭐ (referalingiz "
+                f"{await db.count_user_task_completions(call.from_user.id)} ta zadaniya bajardi)",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ---------- Promokod ----------

@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -236,6 +237,179 @@ async def deliver_action(call: CallbackQuery, bot: Bot):
     await call.answer()
 
 
+# ==================== STARS ISHLASH (ZADANIYA) ====================
+async def _tasks_text() -> str:
+    tasks = await db.get_active_tasks()
+    threshold = await db.get_referral_task_threshold()
+    ref_stars = await db.get_referral_stars()
+    lines = [
+        "🌟 <b>Stars ishlash (zadaniya) kanallari</b>\n",
+        "Bu yerga reklama kanallarini qo'shasiz. Foydalanuvchi kanalga obuna "
+        "bo'lib «Tekshirish» bosganda unga belgilangan Stars beriladi.\n",
+    ]
+    if tasks:
+        for t in tasks:
+            label = t.title or t.channel_id
+            link = t.invite_link or "—"
+            lines.append(
+                f"• <b>{label}</b> — {t.reward_stars} ⭐\n"
+                f"   ID: <code>{t.channel_id}</code>\n"
+                f"   Link: {link}"
+            )
+    else:
+        lines.append("Hali zadaniya qo'shilmagan.")
+    lines.append(
+        f"\n🎯 Referal uchun bonus: referal <b>{threshold} ta</b> zadaniya bajarsa, "
+        f"uni taklif qilgan odamga <b>{ref_stars} ⭐</b> beriladi."
+    )
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data == "adm:tasks")
+async def adm_tasks(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.clear()
+    from bot.keyboards.kb import admin_tasks_menu
+    tasks = await db.get_active_tasks()
+    await call.message.edit_text(await _tasks_text(), reply_markup=admin_tasks_menu(tasks))
+    await call.answer()
+
+
+@router.callback_query(F.data == "task:add")
+async def task_add_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminState.task_channel)
+    await call.message.answer(
+        "🌟 <b>Yangi zadaniya qo'shish</b>\n\n"
+        "Reklama kanalini yuboring. Buni 3 usulda qilishingiz mumkin:\n"
+        "1️⃣ Kanaldan biror xabarni shu yerga <b>forward</b> qiling, yoki\n"
+        "2️⃣ Kanal <code>@username</code> sini yuboring, yoki\n"
+        "3️⃣ Kanal ID sini (<code>-100...</code>) yuboring.\n\n"
+        "⚠️ Bot obunani tekshira olishi va link yarata olishi uchun "
+        "u shu kanalda <b>admin</b> bo'lishi shart.",
+        reply_markup=None,
+    )
+    await call.answer()
+
+
+@router.message(AdminState.task_channel)
+async def task_add_channel(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    channel_id: str | None = None
+    title: str | None = None
+    # forward qilingan kanal xabari?
+    fwd = message.forward_from_chat
+    if fwd is not None:
+        channel_id = str(fwd.id)
+        title = fwd.title
+    else:
+        text = (message.text or "").strip()
+        if text.startswith("@") or text.startswith("-100") or (
+            text.lstrip("-").isdigit()
+        ):
+            channel_id = text
+    if not channel_id:
+        await message.answer(
+            "❌ Kanalni aniqlay olmadim. Kanaldan xabar forward qiling yoki "
+            "<code>@username</code> / <code>-100...</code> ID yuboring:"
+        )
+        return
+    await state.update_data(task_channel=channel_id, task_title=title)
+    await state.set_state(AdminState.task_reward)
+    await message.answer(
+        f"✅ Kanal: <code>{channel_id}</code>\n\n"
+        f"Endi shu zadaniya uchun beriladigan Stars sonini kiriting (faqat son):"
+    )
+
+
+@router.message(AdminState.task_reward)
+async def task_add_reward(message: Message, state: FSMContext, bot: Bot):
+    if not await is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip().replace(" ", "")
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("❌ Musbat son kiriting:")
+        return
+    reward = int(text)
+    data = await state.get_data()
+    channel_id = data.get("task_channel")
+    title = data.get("task_title")
+    await state.clear()
+
+    task = await db.create_task(channel_id=channel_id, title=title, reward_stars=reward)
+
+    # Invite link yaratishga urinamiz (bot kanalda admin bo'lishi kerak)
+    warn = ""
+    try:
+        chat_id: int | str = int(channel_id) if channel_id.lstrip("-").isdigit() else channel_id
+        invite = await bot.create_chat_invite_link(chat_id)
+        await db.set_task_invite_link(task.id, invite.invite_link)
+    except (TelegramBadRequest, TelegramForbiddenError):
+        await db.set_task_invite_link(task.id, None)
+        warn = (
+            "\n\n⚠️ Link yaratib bo'lmadi. Bot shu kanalda <b>admin</b> emas. "
+            "Obuna tekshiruvi va link yaratilishi uchun botni kanalga admin qiling."
+        )
+    except Exception:  # noqa: BLE001
+        await db.set_task_invite_link(task.id, None)
+        warn = (
+            "\n\n⚠️ Link yaratib bo'lmadi (noma'lum xatolik). Botni kanalga "
+            "admin qilganingizni tekshiring."
+        )
+
+    await message.answer(
+        f"✅ Zadaniya qo'shildi!\n\n"
+        f"🌟 Kanal: <code>{channel_id}</code>\n"
+        f"🎁 Mukofot: {reward} ⭐" + warn
+    )
+    from bot.keyboards.kb import admin_tasks_menu
+    tasks = await db.get_active_tasks()
+    await message.answer(await _tasks_text(), reply_markup=admin_tasks_menu(tasks))
+
+
+@router.callback_query(F.data.startswith("task:del:"))
+async def task_del(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        return
+    task_id = int(call.data.split(":")[2])
+    await db.set_task_active(task_id, False)
+    from bot.keyboards.kb import admin_tasks_menu
+    tasks = await db.get_active_tasks()
+    await call.message.edit_text(await _tasks_text(), reply_markup=admin_tasks_menu(tasks))
+    await call.answer("🗑 Zadaniya o'chirildi.")
+
+
+# ---------- Referal zadaniya chegarasi ----------
+@router.callback_query(F.data == "set:refthreshold")
+async def set_refthreshold_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminState.set_ref_threshold)
+    await call.message.answer(
+        "🎯 Referal bonusi berilishi uchun referal nechta zadaniya bajarishi kerak? "
+        "(son, masalan 3):"
+    )
+    await call.answer()
+
+
+@router.message(AdminState.set_ref_threshold)
+async def set_refthreshold_save(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip().replace(" ", "")
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("❌ Musbat son kiriting:")
+        return
+    await db.set_referral_task_threshold(int(text))
+    await state.clear()
+    from bot.keyboards.kb import settings_menu
+    await message.answer(f"✅ Referal zadaniya chegarasi {int(text)} ta qilib o'rnatildi.")
+    await message.answer(await _settings_text(), reply_markup=settings_menu())
+
+
 # ==================== AKKAUNT ULASH ====================
 @router.callback_query(F.data == "adm:back")
 async def adm_back(call: CallbackQuery, state: FSMContext):
@@ -256,6 +430,7 @@ async def noop_cb(call: CallbackQuery):
 async def _settings_text() -> str:
     price = await db.get_price_per_star()
     ref_stars = await db.get_referral_stars()
+    threshold = await db.get_referral_task_threshold()
     ref_line = (
         f"{ref_stars} Stars" if ref_stars > 0
         else f"o'chirilgan (foizli rejim: {settings.referral_bonus_percent}%)"
@@ -263,10 +438,11 @@ async def _settings_text() -> str:
     return (
         f"⚙️ <b>Narx va referal sozlamalari</b>\n\n"
         f"💰 1 Star narxi: <b>{price:,} so'm</b>\n"
-        f"👥 1 referalga mukofot: <b>{ref_line}</b>\n\n"
+        f"👥 Referal bonusi: <b>{ref_line}</b>\n"
+        f"🎯 Referal zadaniya chegarasi: <b>{threshold} ta</b>\n\n"
         f"ℹ️ Narxni o'zgartirsangiz, barcha yangi buyurtmalar yangi narxda hisoblanadi.\n"
-        f"Referal Stars > 0 bo'lsa, har yangi referal birinchi buyurtma qilganda "
-        f"shuncha Stars qiymatida (Stars × narx) bonus beradi."
+        f"Referal Stars > 0 bo'lsa, taklif qilingan foydalanuvchi <b>{threshold} ta</b> "
+        f"zadaniya bajargach, uni taklif qilgan odamga <b>{ref_stars} ⭐</b> beriladi."
     )
 
 

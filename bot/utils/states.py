@@ -38,3 +38,7 @@ class AdminState(StatesGroup):
     # Narx / referal sozlamalari
     set_price = State()
     set_ref_stars = State()
+    set_ref_threshold = State()
+    # Stars ishlash (zadaniya) kanali qo'shish
+    task_channel = State()
+    task_reward = State()
