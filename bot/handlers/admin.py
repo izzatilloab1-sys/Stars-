@@ -382,6 +382,144 @@ async def task_del(call: CallbackQuery):
     await call.answer("🗑 Zadaniya o'chirildi.")
 
 
+# ==================== MAJBURIY OBUNA (FORCED SUBSCRIPTION) ====================
+async def _subs_text() -> str:
+    channels = await db.get_all_required_channels()
+    lines = [
+        "📢 <b>Majburiy obuna kanallari</b>\n",
+        "Bu yerga majburiy obuna kanallarini qo'shasiz. Foydalanuvchi botdan "
+        "foydalanishdan oldin shu kanallarga obuna bo'lishi shart.\n",
+        "ℹ️ Kanal qo'shilganda bot <b>maxsus (unikal) link</b> yaratadi — shu link "
+        "orqali qo'shilganlarni sanash mumkin. Buning uchun bot kanalda "
+        "<b>admin</b> bo'lishi shart.\n",
+    ]
+    if channels:
+        for ch in channels:
+            label = ch.title or ch.channel_id
+            link = ch.invite_link or "—"
+            state_mark = "🟢 faol" if ch.is_active else "🔴 o'chiq"
+            lines.append(
+                f"• <b>{label}</b> — {state_mark}\n"
+                f"   ID: <code>{ch.channel_id}</code>\n"
+                f"   Link: {link}"
+            )
+    else:
+        lines.append("Hali majburiy kanal qo'shilmagan.")
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data == "adm:subs")
+async def adm_subs(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.clear()
+    from bot.keyboards.kb import admin_subs_menu
+    channels = await db.get_all_required_channels()
+    await call.message.edit_text(await _subs_text(), reply_markup=admin_subs_menu(channels))
+    await call.answer()
+
+
+@router.callback_query(F.data == "sub:add")
+async def sub_add_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminState.req_channel)
+    await call.message.answer(
+        "📢 <b>Yangi majburiy kanal qo'shish</b>\n\n"
+        "Kanalni yuboring. Buni 3 usulda qilishingiz mumkin:\n"
+        "1️⃣ Kanaldan biror xabarni shu yerga <b>forward</b> qiling, yoki\n"
+        "2️⃣ Kanal <code>@username</code> sini yuboring, yoki\n"
+        "3️⃣ Kanal ID sini (<code>-100...</code>) yuboring.\n\n"
+        "⚠️ Bot unikal link yarata olishi va obunani tekshira olishi uchun "
+        "u shu kanalda <b>admin</b> bo'lishi shart. Qo'shilganlarni sanash "
+        "aynan bot yaratgan unikal link orqali ishlaydi.",
+        reply_markup=None,
+    )
+    await call.answer()
+
+
+@router.message(AdminState.req_channel)
+async def sub_add_channel(message: Message, state: FSMContext, bot: Bot):
+    if not await is_admin(message.from_user.id):
+        return
+    channel_id: str | None = None
+    title: str | None = None
+    fwd = message.forward_from_chat
+    if fwd is not None:
+        channel_id = str(fwd.id)
+        title = fwd.title
+    else:
+        text = (message.text or "").strip()
+        if text.startswith("@") or text.startswith("-100") or text.lstrip("-").isdigit():
+            channel_id = text
+    if not channel_id:
+        await message.answer(
+            "❌ Kanalni aniqlay olmadim. Kanaldan xabar forward qiling yoki "
+            "<code>@username</code> / <code>-100...</code> ID yuboring:"
+        )
+        return
+    await state.clear()
+
+    # Unikal link yaratishga urinamiz (bot kanalda admin bo'lishi kerak)
+    invite_link: str | None = None
+    warn = ""
+    try:
+        chat_id: int | str = int(channel_id) if channel_id.lstrip("-").isdigit() else channel_id
+        invite = await bot.create_chat_invite_link(chat_id, creates_join_request=False)
+        invite_link = invite.invite_link
+    except (TelegramBadRequest, TelegramForbiddenError):
+        warn = (
+            "\n\n⚠️ Unikal link yaratib bo'lmadi. Bot shu kanalda <b>admin</b> emas. "
+            "Majburiy obuna tekshiruvi va qo'shilganlarni sanash ishlashi uchun "
+            "botni kanalga admin qiling."
+        )
+    except Exception:  # noqa: BLE001
+        warn = (
+            "\n\n⚠️ Unikal link yaratib bo'lmadi (noma'lum xatolik). Botni kanalga "
+            "admin qilganingizni tekshiring."
+        )
+
+    await db.create_required_channel(
+        channel_id=channel_id, title=title, invite_link=invite_link
+    )
+    await message.answer(
+        f"✅ Majburiy kanal qo'shildi!\n\n"
+        f"📢 Kanal: <code>{channel_id}</code>\n"
+        f"🔗 Link: {invite_link or '—'}" + warn
+    )
+    from bot.keyboards.kb import admin_subs_menu
+    channels = await db.get_all_required_channels()
+    await message.answer(await _subs_text(), reply_markup=admin_subs_menu(channels))
+
+
+@router.callback_query(F.data.startswith("sub:toggle:"))
+async def sub_toggle(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        return
+    ch_id = int(call.data.split(":")[2])
+    ch = await db.get_required_channel(ch_id)
+    if not ch:
+        await call.answer("Kanal topilmadi.", show_alert=True)
+        return
+    await db.set_required_channel_active(ch_id, not ch.is_active)
+    from bot.keyboards.kb import admin_subs_menu
+    channels = await db.get_all_required_channels()
+    await call.message.edit_text(await _subs_text(), reply_markup=admin_subs_menu(channels))
+    await call.answer("✅ Holat o'zgartirildi.")
+
+
+@router.callback_query(F.data.startswith("sub:del:"))
+async def sub_del(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        return
+    ch_id = int(call.data.split(":")[2])
+    await db.set_required_channel_active(ch_id, False)
+    from bot.keyboards.kb import admin_subs_menu
+    channels = await db.get_all_required_channels()
+    await call.message.edit_text(await _subs_text(), reply_markup=admin_subs_menu(channels))
+    await call.answer("🗑 Kanal o'chirildi.")
+
+
 # ---------- Referal zadaniya chegarasi ----------
 @router.callback_query(F.data == "set:refthreshold")
 async def set_refthreshold_start(call: CallbackQuery, state: FSMContext):

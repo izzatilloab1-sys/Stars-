@@ -102,6 +102,7 @@ def admin_menu(is_owner: bool = False) -> InlineKeyboardMarkup:
     kb.row(InlineKeyboardButton(text="💰 Balans qo'shish", callback_data="adm:addbal"))
     kb.row(InlineKeyboardButton(text="📢 Xabar yuborish", callback_data="adm:broadcast"))
     kb.row(InlineKeyboardButton(text="🌟 Stars ishlash (zadaniya)", callback_data="adm:tasks"))
+    kb.row(InlineKeyboardButton(text="📢 Majburiy obuna", callback_data="adm:subs"))
     kb.row(InlineKeyboardButton(text="⚙️ Narx va referal sozlamalari", callback_data="adm:settings"))
     kb.row(InlineKeyboardButton(text="👮 Adminlar", callback_data="adm:admins"))
     if is_owner:
@@ -150,6 +151,40 @@ def tasks_list_kb(tasks: list) -> InlineKeyboardMarkup:
             text=f"✅ Tekshirish ({t.reward_stars} ⭐)",
             callback_data=f"task:check:{t.id}",
         ))
+    return kb.as_markup()
+
+
+# ---------- Majburiy obuna (forced subscription) ----------
+def admin_subs_menu(channels: list) -> InlineKeyboardMarkup:
+    """Admin uchun majburiy obuna kanallari ro'yxati + toggle/o'chirish."""
+    kb = InlineKeyboardBuilder()
+    for ch in channels:
+        label = ch.title or ch.channel_id
+        mark = "🟢" if ch.is_active else "🔴"
+        kb.row(InlineKeyboardButton(text=f"{mark} {label}", callback_data="noop"))
+        kb.row(
+            InlineKeyboardButton(
+                text="⏸ O'chirish" if ch.is_active else "▶️ Yoqish",
+                callback_data=f"sub:toggle:{ch.id}",
+            ),
+            InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"sub:del:{ch.id}"),
+        )
+    kb.row(InlineKeyboardButton(text="➕ Kanal qo'shish", callback_data="sub:add"))
+    kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:back"))
+    return kb.as_markup()
+
+
+def subscribe_gate_kb(channels: list) -> InlineKeyboardMarkup:
+    """Foydalanuvchiga: har bir majburiy kanalga obuna tugmasi + Tekshirish."""
+    kb = InlineKeyboardBuilder()
+    for ch in channels:
+        label = ch.title or ch.channel_id
+        url = ch.invite_link
+        if not url and isinstance(ch.channel_id, str) and ch.channel_id.startswith("@"):
+            url = f"https://t.me/{ch.channel_id[1:]}"
+        if url:
+            kb.row(InlineKeyboardButton(text=f"📢 {label}", url=url))
+    kb.row(InlineKeyboardButton(text="✅ Tekshirish", callback_data="sub:check"))
     return kb.as_markup()
 
 

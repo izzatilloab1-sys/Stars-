@@ -9,7 +9,8 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.config import settings
 from bot.database import db
-from bot.keyboards.kb import cancel_kb, main_menu, tasks_list_kb
+from bot.keyboards.kb import cancel_kb, main_menu, subscribe_gate_kb, tasks_list_kb
+from bot.services.subscription import missing_required_channels
 from bot.utils.states import PromoState
 
 router = Router()
@@ -59,15 +60,35 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
         except Exception:  # noqa: BLE001
             pass
 
+    # Majburiy obuna tekshiruvi: faol kanallar bo'lsa va foydalanuvchi obuna
+    # bo'lmagan bo'lsa — menyu o'rniga obuna tugmalari ko'rsatiladi.
+    missing = await missing_required_channels(message.bot, message.from_user.id)
+    if missing:
+        await message.answer(
+            "📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:",
+            reply_markup=subscribe_gate_kb(missing),
+        )
+        return
+
+    await _send_welcome(message, message.from_user.id, message.from_user.full_name)
+
+
+async def _send_welcome(message: Message, user_id: int, full_name: str) -> None:
+    """Asosiy menyu bilan xush kelibsiz xabari.
+
+    `message` — javob yuboriladigan xabar (callback holatida call.message);
+    `user_id`/`full_name` — haqiqiy foydalanuvchi (call.message.from_user bot
+    bo'lgani uchun alohida uzatiladi).
+    """
     price = await db.get_price_per_star()
     await message.answer(
-        f"👋 Assalomu alaykum, <b>{message.from_user.full_name}</b>!\n\n"
+        f"👋 Assalomu alaykum, <b>{full_name}</b>!\n\n"
         f"⭐ Bu bot orqali istalgan Telegram foydalanuvchisiga <b>Telegram Stars</b> "
         f"sotib olishingiz mumkin.\n\n"
         f"💰 Narx: <b>{price:,} so'm</b> / 1 Star\n"
         f"📦 Minimal buyurtma: {settings.min_stars} Stars\n\n"
         f"Quyidagi menyudan kerakli bo'limni tanlang 👇",
-        reply_markup=main_menu(await _is_admin(message.from_user.id)),
+        reply_markup=main_menu(await _is_admin(user_id)),
     )
 
 
@@ -244,6 +265,33 @@ async def task_check(call: CallbackQuery, bot: Bot):
             )
         except Exception:  # noqa: BLE001
             pass
+
+
+# ---------- Majburiy obuna tekshiruvi ----------
+@router.callback_query(F.data == "sub:check")
+async def sub_check(call: CallbackQuery, bot: Bot):
+    missing = await missing_required_channels(bot, call.from_user.id)
+    if missing:
+        await call.answer(
+            "❌ Siz hali barcha kanallarga obuna bo'lmagansiz. "
+            "Avval obuna bo'ling, keyin qayta tekshiring.",
+            show_alert=True,
+        )
+        try:
+            await call.message.edit_text(
+                "📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:",
+                reply_markup=subscribe_gate_kb(missing),
+            )
+        except TelegramBadRequest:
+            pass
+        return
+
+    await call.answer("✅ Rahmat! Obuna tasdiqlandi.")
+    try:
+        await call.message.edit_text("✅ Obuna tasdiqlandi!")
+    except TelegramBadRequest:
+        pass
+    await _send_welcome(call.message, call.from_user.id, call.from_user.full_name)
 
 
 # ---------- Promokod ----------

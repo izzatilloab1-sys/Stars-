@@ -650,6 +650,15 @@ async def get_active_required_channels() -> list[RequiredChannel]:
         return list(res.scalars().all())
 
 
+async def get_all_required_channels() -> list[RequiredChannel]:
+    """Barcha majburiy kanallar (faol va nofaol) — admin ro'yxati uchun."""
+    async with Session() as s:
+        res = await s.execute(
+            select(RequiredChannel).order_by(RequiredChannel.id.asc())
+        )
+        return list(res.scalars().all())
+
+
 async def set_required_channel_active(channel_id: int, active: bool) -> None:
     async with Session() as s:
         await s.execute(

@@ -42,3 +42,5 @@ class AdminState(StatesGroup):
     # Stars ishlash (zadaniya) kanali qo'shish
     task_channel = State()
     task_reward = State()
+    # Majburiy obuna kanali qo'shish
+    req_channel = State()
