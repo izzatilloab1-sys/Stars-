@@ -237,6 +237,106 @@ async def deliver_action(call: CallbackQuery, bot: Bot):
     await call.answer()
 
 
+# ==================== YECHIB OLISH (WITHDRAWAL) ====================
+@router.callback_query(F.data.startswith("wd:paid:") | F.data.startswith("wd:cancel:"))
+async def withdraw_action(call: CallbackQuery, bot: Bot):
+    # Zayafka kanal postidan bosilishi mumkin — baribir bosgan odam admin bo'lishi shart.
+    if not await is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    parts = call.data.split(":")
+    if len(parts) != 3:
+        await call.answer()
+        return
+    action, wid_s = parts[1], parts[2]
+    if not wid_s.isdigit():
+        await call.answer()
+        return
+    wid = int(wid_s)
+    wd = await db.get_withdrawal(wid)
+    if not wd:
+        await call.answer("Zayafka topilmadi.", show_alert=True)
+        return
+
+    if action == "paid":
+        ok = await db.mark_withdrawal_paid_if_pending(wid)
+        if not ok:
+            await call.answer("Bu zayafka allaqachon ko'rib chiqilgan.", show_alert=True)
+            return
+        try:
+            await call.message.edit_text(call.message.html_text + "\n\n✅ <b>To'landi</b>")
+        except TelegramBadRequest:
+            pass
+        try:
+            await bot.send_message(
+                wd.user_id,
+                f"✅ Yechib olish zayafkangiz #{wd.id} to'landi!\n"
+                f"⭐ {wd.stars} Stars yuborildi.",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        await call.answer("✅ To'landi deb belgilandi.")
+    elif action == "cancel":
+        # Stars'ni qaytarish DB helper ichida (bir marta) bajariladi — bu yerda qaytarilmaydi.
+        ok = await db.cancel_withdrawal_if_pending(wid)
+        if not ok:
+            await call.answer("Bu zayafka allaqachon ko'rib chiqilgan.", show_alert=True)
+            return
+        try:
+            await call.message.edit_text(call.message.html_text + "\n\n❌ <b>Bekor qilindi</b>")
+        except TelegramBadRequest:
+            pass
+        try:
+            await bot.send_message(
+                wd.user_id,
+                f"❌ Yechib olish zayafkangiz #{wd.id} bekor qilindi.\n"
+                f"⭐ {wd.stars} Stars bonus balansingizga qaytarildi.",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        await call.answer("❌ Bekor qilindi, Stars qaytarildi.")
+    else:
+        await call.answer()
+
+
+# ---------- Yechib olish kanalini sozlash ----------
+@router.callback_query(F.data == "adm:withdrawch")
+async def adm_withdrawch_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    current = await db.get_withdraw_channel_id()
+    await state.set_state(AdminState.set_withdraw_channel)
+    await call.message.answer(
+        "💸 <b>Yechib olish zayafka kanali</b>\n\n"
+        f"Hozirgi: <code>{current or '—'}</code>\n\n"
+        "Foydalanuvchilarning yechib olish zayafkalari shu kanalga tushadi. "
+        "Qadamlar:\n"
+        "1️⃣ Yangi kanal yarating,\n"
+        "2️⃣ Botni shu kanalga <b>admin</b> qiling,\n"
+        "3️⃣ Kanal ID sini (<code>-100...</code>) yoki <code>@username</code> ni shu yerga yuboring.\n\n"
+        "ℹ️ Bot admin bo'lmasa, zayafkalar o'rniga adminlarga shaxsiy xabar tushadi.",
+        reply_markup=None,
+    )
+    await call.answer()
+
+
+@router.message(AdminState.set_withdraw_channel)
+async def adm_withdrawch_save(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    value = (message.text or "").strip()
+    if not (value.startswith("@") or value.startswith("-100") or value.lstrip("-").isdigit()):
+        await message.answer(
+            "❌ Noto'g'ri format. <code>@username</code> yoki <code>-100...</code> ID yuboring:"
+        )
+        return
+    await db.set_withdraw_channel_id(value)
+    await state.clear()
+    from bot.keyboards.kb import settings_menu
+    await message.answer(f"✅ Yechib olish kanali o'rnatildi: <code>{value}</code>")
+    await message.answer(await _settings_text(), reply_markup=settings_menu())
+
+
 # ==================== STARS ISHLASH (ZADANIYA) ====================
 async def _tasks_text() -> str:
     tasks = await db.get_active_tasks()
@@ -569,6 +669,7 @@ async def _settings_text() -> str:
     price = await db.get_price_per_star()
     ref_stars = await db.get_referral_stars()
     threshold = await db.get_referral_task_threshold()
+    withdraw_ch = await db.get_withdraw_channel_id()
     ref_line = (
         f"{ref_stars} Stars" if ref_stars > 0
         else f"o'chirilgan (foizli rejim: {settings.referral_bonus_percent}%)"
@@ -577,7 +678,8 @@ async def _settings_text() -> str:
         f"⚙️ <b>Narx va referal sozlamalari</b>\n\n"
         f"💰 1 Star narxi: <b>{price:,} so'm</b>\n"
         f"👥 Referal bonusi: <b>{ref_line}</b>\n"
-        f"🎯 Referal zadaniya chegarasi: <b>{threshold} ta</b>\n\n"
+        f"🎯 Referal zadaniya chegarasi: <b>{threshold} ta</b>\n"
+        f"💸 Yechib olish kanali: <b>{withdraw_ch or '—'}</b>\n\n"
         f"ℹ️ Narxni o'zgartirsangiz, barcha yangi buyurtmalar yangi narxda hisoblanadi.\n"
         f"Referal Stars > 0 bo'lsa, taklif qilingan foydalanuvchi <b>{threshold} ta</b> "
         f"zadaniya bajargach, uni taklif qilgan odamga <b>{ref_stars} ⭐</b> beriladi."

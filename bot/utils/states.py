@@ -44,3 +44,5 @@ class AdminState(StatesGroup):
     task_reward = State()
     # Majburiy obuna kanali qo'shish
     req_channel = State()
+    # Yechib olish (withdrawal) zayafka kanali
+    set_withdraw_channel = State()

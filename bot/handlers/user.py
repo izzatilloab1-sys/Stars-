@@ -1,6 +1,8 @@
 """Foydalanuvchi handlerlari: /start, profil, referal, promokod, buyurtmalar."""
 from __future__ import annotations
 
+import logging
+
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import CommandObject, CommandStart
@@ -9,10 +11,18 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.config import settings
 from bot.database import db
-from bot.keyboards.kb import cancel_kb, main_menu, subscribe_gate_kb, tasks_list_kb
+from bot.keyboards.kb import (
+    cancel_kb,
+    main_menu,
+    subscribe_gate_kb,
+    tasks_list_kb,
+    withdraw_admin_kb,
+    withdraw_packages_kb,
+)
 from bot.services.subscription import missing_required_channels
 from bot.utils.states import PromoState
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
@@ -265,6 +275,99 @@ async def task_check(call: CallbackQuery, bot: Bot):
             )
         except Exception:  # noqa: BLE001
             pass
+
+
+# ---------- Stars yechib olish (manual) ----------
+WITHDRAW_PACKAGES = (15, 25, 50)
+
+
+@router.message(F.text == "💸 Yechib olish")
+async def withdraw_entry(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user:
+        await message.answer("Iltimos, /start bosing.")
+        return
+    await message.answer(
+        "💸 <b>Stars yechib olish</b>\n\n"
+        f"⭐ Sizning Stars balansingiz: <b>{user.stars_balance}</b>\n\n"
+        "Quyidagi paketlardan birini tanlang. Yechib olish <b>qo'lda</b> amalga "
+        "oshiriladi: zayafkangiz admin tomonidan ko'rib chiqiladi va Stars qo'lda "
+        "yuboriladi. Minimal miqdor — <b>15 ⭐</b>.\n\n"
+        "ℹ️ Tanlaganingizdan so'ng Stars balansingizdan ushlab turiladi (hold). "
+        "Agar admin bekor qilsa, Stars balansingizga qaytariladi.",
+        reply_markup=withdraw_packages_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("wd:req:"))
+async def withdraw_request(call: CallbackQuery, bot: Bot):
+    stars = int(call.data.split(":")[2])
+    if stars not in WITHDRAW_PACKAGES:
+        await call.answer("Noto'g'ri miqdor.", show_alert=True)
+        return
+
+    wd = await db.create_withdrawal(call.from_user.id, stars)
+    if wd is None:
+        balance = await db.get_stars_balance(call.from_user.id)
+        await call.answer(
+            f"❌ Stars balansingiz yetarli emas.\n"
+            f"Kerak: {stars} ⭐, balansingiz: {balance} ⭐",
+            show_alert=True,
+        )
+        return
+
+    await call.answer()
+    try:
+        await call.message.edit_text(
+            f"✅ Zayafka yaratildi! <b>{stars} ⭐</b> ushlab turildi va admin "
+            f"ko'rib chiqishini kutmoqda.\n\n"
+            f"🆔 Zayafka: <code>#{wd.id}</code>\n"
+            f"Admin to'lovni amalga oshirgach, sizga xabar beriladi."
+        )
+    except TelegramBadRequest:
+        await call.message.answer(
+            f"✅ Zayafka yaratildi! <b>{stars} ⭐</b> ushlab turildi va admin "
+            f"ko'rib chiqishini kutmoqda.\n\n"
+            f"🆔 Zayafka: <code>#{wd.id}</code>"
+        )
+
+    # Zayafka matni
+    u = call.from_user
+    uname = f"@{u.username}" if u.username else u.full_name
+    text = (
+        "💸 <b>Yangi yechib olish zayafkasi</b>\n\n"
+        f"🆔 Zayafka: <code>#{wd.id}</code>\n"
+        f"👤 Foydalanuvchi: {uname}\n"
+        f"🆔 User ID: <code>{u.id}</code>\n"
+        f"⭐ Miqdor: <b>{stars} ⭐</b>\n\n"
+        "Stars'ni qo'lda yuboring va «✅ To'landi» tugmasini bosing. "
+        "Agar noqonuniy bo'lsa «❌ Bekor qilish» — Stars balansga qaytadi."
+    )
+    kb = withdraw_admin_kb(wd.id)
+
+    channel = await db.get_withdraw_channel_id()
+    sent_to_channel = False
+    if channel:
+        chat_id: int | str = (
+            int(channel)
+            if isinstance(channel, str) and channel.lstrip("-").isdigit()
+            else channel
+        )
+        try:
+            await bot.send_message(chat_id, text, reply_markup=kb)
+            sent_to_channel = True
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Yechib olish kanaliga yuborib bo'lmadi (%s): %s", channel, e)
+    else:
+        logger.warning("Yechib olish kanali sozlanmagan — adminlarga yuboriladi.")
+
+    # Kanal yo'q yoki yuborib bo'lmadi — adminlarga fallback
+    if not sent_to_channel:
+        for admin_id in settings.admin_id_list:
+            try:
+                await bot.send_message(admin_id, text, reply_markup=kb)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # ---------- Majburiy obuna tekshiruvi ----------

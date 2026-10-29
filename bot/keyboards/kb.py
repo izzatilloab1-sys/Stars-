@@ -19,7 +19,10 @@ def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
         KeyboardButton(text="👥 Referal"),
         KeyboardButton(text="📦 Buyurtmalarim"),
     )
-    kb.row(KeyboardButton(text="🌟 Stars ishlash"))
+    kb.row(
+        KeyboardButton(text="🌟 Stars ishlash"),
+        KeyboardButton(text="💸 Yechib olish"),
+    )
     kb.row(
         KeyboardButton(text="🎁 Promokod"),
         KeyboardButton(text="ℹ️ Yordam"),
@@ -64,6 +67,26 @@ def star_packages_kb() -> InlineKeyboardMarkup:
     kb.button(text="✏️ Boshqa miqdor", callback_data="pkg:custom")
     kb.button(text="❌ Bekor qilish", callback_data="cancel")
     kb.adjust(3, 3, 1, 1)
+    return kb.as_markup()
+
+
+def withdraw_packages_kb() -> InlineKeyboardMarkup:
+    """Stars yechib olish paketlari (minimal 15 ⭐)."""
+    kb = InlineKeyboardBuilder()
+    for pkg in (15, 25, 50):
+        kb.button(text=f"{pkg} ⭐", callback_data=f"wd:req:{pkg}")
+    kb.button(text="❌ Bekor qilish", callback_data="cancel")
+    kb.adjust(3, 1)
+    return kb.as_markup()
+
+
+def withdraw_admin_kb(withdrawal_id: int) -> InlineKeyboardMarkup:
+    """Zayafka tagidagi admin tugmalari: To'landi / Bekor qilish."""
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="✅ To'landi", callback_data=f"wd:paid:{withdrawal_id}"),
+        InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"wd:cancel:{withdrawal_id}"),
+    )
     return kb.as_markup()
 
 
@@ -115,6 +138,7 @@ def settings_menu() -> InlineKeyboardMarkup:
     kb.row(InlineKeyboardButton(text="💰 1 Star narxini o'zgartirish", callback_data="set:price"))
     kb.row(InlineKeyboardButton(text="👥 Referal Stars sonini o'zgartirish", callback_data="set:refstars"))
     kb.row(InlineKeyboardButton(text="🎯 Referal zadaniya chegarasi", callback_data="set:refthreshold"))
+    kb.row(InlineKeyboardButton(text="💸 Yechib olish kanali", callback_data="adm:withdrawch"))
     kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:back"))
     return kb.as_markup()
 
