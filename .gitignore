@@ -1,0 +1,29 @@
+# Maxfiy sozlamalar — HECH QACHON push qilinmasin
+.env
+*.env
+!.env.example
+
+# Ma'lumotlar bazasi
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.log
