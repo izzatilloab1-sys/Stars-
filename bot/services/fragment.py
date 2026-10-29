@@ -187,12 +187,19 @@ async def get_account_status() -> dict:
     cookies = await _fragment_cookies()
     mode = await get_fragment_mode()
     seed_words = len(seed.split()) if seed else 0
+    # Telegram akkaunt holati
+    from bot.database import db
+    tg_session = await db.get_setting("tg_session", settings.tg_session)
+    tg_api_id = await db.get_setting("tg_api_id", str(settings.tg_api_id or ""))
+    tg_api_hash = await db.get_setting("tg_api_hash", settings.tg_api_hash)
     return {
         "mode": mode,
         "seed_set": bool(seed),
         "seed_words": seed_words,
         "cookie_set": bool(cookies.get("stel_token")),
         "wallet_address": await get_wallet_address(seed) if seed else None,
+        "tg_set": bool(tg_session),
+        "tg_api_set": bool(tg_api_id and tg_api_id != "0" and tg_api_hash),
     }
 
 

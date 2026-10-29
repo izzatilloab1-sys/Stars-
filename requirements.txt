@@ -6,6 +6,7 @@ pydantic-settings==2.5.2
 python-dotenv==1.0.1
 aiohttp==3.10.10
 tonutils==0.1.0
+telethon==1.36.0
 
 # Fragment integratsiyasi uchun (quyidagilardan birini o'rnating):
 #   pip install fragment-api        # S1qwy/fragment-api oilasi

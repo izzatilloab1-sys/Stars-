@@ -12,8 +12,9 @@ from sqlalchemy import select
 from bot.config import settings
 from bot.database import db
 from bot.database.models import OrderStatus, User
-from bot.keyboards.kb import account_menu, admin_menu, main_menu
+from bot.keyboards.kb import account_menu, admin_menu, main_menu, tg_account_menu
 from bot.services import fragment as fragment_service
+from bot.services import tg_account
 from bot.utils.states import AdminState
 
 logger = logging.getLogger(__name__)
@@ -409,3 +410,244 @@ async def acc_clear(call: CallbackQuery):
     status = await fragment_service.get_account_status()
     await call.message.edit_text(await _account_text(status), reply_markup=account_menu(status))
     await call.answer("🗑 Akkaunt uzildi, rejim manual'ga o'tdi.")
+
+
+# ==================== TELEGRAM AKKAUNT (telefon raqam orqali) ====================
+# Faol login oqimlari: admin_id -> LoginFlow
+_login_flows: dict[int, "tg_account.LoginFlow"] = {}
+
+
+async def _tg_text(status: dict) -> str:
+    api = "✅ sozlangan" if status.get("tg_api_set") else "❌ sozlanmagan"
+    tg = "❌ ulanmagan"
+    if status.get("tg_set"):
+        info = await tg_account.check_session()
+        if info.get("ok"):
+            tg = f"✅ @{info.get('username') or info.get('id')} ({info.get('name','')})"
+        else:
+            tg = f"⚠️ ulangan, lekin ishlamayapti: {info.get('error','')}"
+    return (
+        f"📱 <b>Telegram akkaunt ulash</b>\n\n"
+        f"Telefon raqamingiz orqali Telegram akkauntingizni ulaysiz. Bu akkaunt "
+        f"Fragment'da Stars sotib olish uchun ishlatiladi.\n\n"
+        f"🔧 api_id / api_hash: {api}\n"
+        f"👤 Akkaunt: {tg}\n\n"
+        f"ℹ️ api_id / api_hash <a href='https://my.telegram.org'>my.telegram.org</a> → "
+        f"API development tools dan olinadi (bepul).\n\n"
+        f"⚠️ <b>Diqqat:</b> session — maxfiy ma'lumot, akkauntingizga to'liq kirish beradi."
+    )
+
+
+@router.callback_query(F.data == "acc:tg")
+async def acc_tg(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.clear()
+    status = await fragment_service.get_account_status()
+    await call.message.edit_text(
+        await _tg_text(status), reply_markup=tg_account_menu(status), disable_web_page_preview=True
+    )
+    await call.answer()
+
+
+# ---------- api_id / api_hash ----------
+@router.callback_query(F.data == "tg:api")
+async def tg_api_start(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminState.tg_api_id)
+    await call.message.answer("🔧 <b>api_id</b> ni kiriting (son, my.telegram.org dan):")
+    await call.answer()
+
+
+@router.message(AdminState.tg_api_id)
+async def tg_api_id_save(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    if not message.text.strip().isdigit():
+        await message.answer("❌ api_id son bo'lishi kerak. Qayta kiriting:")
+        return
+    await db.set_setting("tg_api_id", message.text.strip())
+    await state.set_state(AdminState.tg_api_hash)
+    await message.answer("🔧 Endi <b>api_hash</b> ni kiriting:")
+
+
+@router.message(AdminState.tg_api_hash)
+async def tg_api_hash_save(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await db.set_setting("tg_api_hash", message.text.strip())
+    await state.clear()
+    try:
+        await message.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await message.answer("✅ api_id / api_hash saqlandi.")
+    status = await fragment_service.get_account_status()
+    await message.answer(await _tg_text(status), reply_markup=tg_account_menu(status),
+                         disable_web_page_preview=True)
+
+
+# ---------- Raqam orqali ulash ----------
+@router.callback_query(F.data == "tg:phone")
+async def tg_phone_start(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    status = await fragment_service.get_account_status()
+    if not status.get("tg_api_set"):
+        await call.answer("Avval api_id / api_hash ni sozlang.", show_alert=True)
+        return
+    await state.set_state(AdminState.tg_phone)
+    await call.message.answer(
+        "📞 Telefon raqamingizni xalqaro formatda kiriting (masalan: <code>+998901234567</code>):"
+    )
+    await call.answer()
+
+
+@router.message(AdminState.tg_phone)
+async def tg_phone_submit(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    phone = message.text.strip().replace(" ", "")
+    flow = tg_account.LoginFlow()
+    try:
+        await flow.start(phone)
+    except Exception as e:  # noqa: BLE001
+        await state.clear()
+        await message.answer(f"❌ Kod yuborishda xatolik: {e}")
+        return
+    _login_flows[message.from_user.id] = flow
+    await state.set_state(AdminState.tg_code)
+    await message.answer(
+        "📩 Telegramga kelgan kodni kiriting.\n\n"
+        "⚠️ Xavfsizlik uchun kodni <b>bo'sh joylar bilan</b> yozing (masalan: "
+        "<code>1 2 3 4 5</code>) — Telegram 'kodni chatga yozma' himoyasini chetlab o'tish uchun."
+    )
+
+
+@router.message(AdminState.tg_code)
+async def tg_code_submit(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    flow = _login_flows.get(message.from_user.id)
+    if not flow:
+        await state.clear()
+        await message.answer("❌ Sessiya topilmadi, qaytadan boshlang.")
+        return
+    code = message.text.strip().replace(" ", "")
+    try:
+        done = await flow.confirm_code(code)
+    except Exception as e:  # noqa: BLE001
+        await state.clear()
+        _login_flows.pop(message.from_user.id, None)
+        await message.answer(f"❌ Kod noto'g'ri yoki xatolik: {e}\nQaytadan urinib ko'ring.")
+        return
+    try:
+        await message.delete()
+    except Exception:  # noqa: BLE001
+        pass
+
+    if not done:
+        # 2FA parol kerak
+        await state.set_state(AdminState.tg_password)
+        await message.answer("🔐 Akkauntingizda 2-bosqichli parol bor. Parolni kiriting:")
+        return
+
+    await tg_account.save_session(flow.session_string)
+    _login_flows.pop(message.from_user.id, None)
+    await state.clear()
+    await message.answer("✅ Telegram akkaunt muvaffaqiyatli ulandi!")
+    status = await fragment_service.get_account_status()
+    await message.answer(await _tg_text(status), reply_markup=tg_account_menu(status),
+                         disable_web_page_preview=True)
+
+
+@router.message(AdminState.tg_password)
+async def tg_password_submit(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    flow = _login_flows.get(message.from_user.id)
+    if not flow:
+        await state.clear()
+        await message.answer("❌ Sessiya topilmadi, qaytadan boshlang.")
+        return
+    try:
+        await flow.confirm_password(message.text.strip())
+    except Exception as e:  # noqa: BLE001
+        await message.answer(f"❌ Parol noto'g'ri: {e}\nQayta kiriting:")
+        return
+    try:
+        await message.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await tg_account.save_session(flow.session_string)
+    _login_flows.pop(message.from_user.id, None)
+    await state.clear()
+    await message.answer("✅ Telegram akkaunt (2FA bilan) muvaffaqiyatli ulandi!")
+    status = await fragment_service.get_account_status()
+    await message.answer(await _tg_text(status), reply_markup=tg_account_menu(status),
+                         disable_web_page_preview=True)
+
+
+# ---------- Session string joylash ----------
+@router.callback_query(F.data == "tg:paste")
+async def tg_paste_start(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminState.tg_session_paste)
+    await call.message.answer(
+        "📋 <code>python -m bot.login</code> orqali olgan <b>session string</b>'ni yuboring:"
+    )
+    await call.answer()
+
+
+@router.message(AdminState.tg_session_paste)
+async def tg_paste_save(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    session_str = message.text.strip()
+    await state.clear()
+    try:
+        await message.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    # tekshirib ko'ramiz
+    info = await tg_account.check_session(session_str)
+    if not info.get("ok"):
+        await message.answer(f"❌ Session ishlamadi: {info.get('error')}\nQayta urinib ko'ring.")
+        return
+    await tg_account.save_session(session_str)
+    await message.answer(
+        f"✅ Session ulandi: @{info.get('username') or info.get('id')} ({info.get('name','')})"
+    )
+    status = await fragment_service.get_account_status()
+    await message.answer(await _tg_text(status), reply_markup=tg_account_menu(status),
+                         disable_web_page_preview=True)
+
+
+# ---------- Tekshirish / uzish ----------
+@router.callback_query(F.data == "tg:check")
+async def tg_check(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    await call.answer("⏳ Tekshirilmoqda...")
+    info = await tg_account.check_session()
+    if info.get("ok"):
+        await call.message.answer(
+            f"✅ Ulanish ishlayapti.\n"
+            f"👤 @{info.get('username') or info.get('id')} ({info.get('name','')})\n"
+            f"📞 {info.get('phone','')}"
+        )
+    else:
+        await call.message.answer(f"❌ {info.get('error')}")
+
+
+@router.callback_query(F.data == "tg:clear")
+async def tg_clear(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    await tg_account.clear_session()
+    status = await fragment_service.get_account_status()
+    await call.message.edit_text(await _tg_text(status), reply_markup=tg_account_menu(status),
+                                 disable_web_page_preview=True)
+    await call.answer("🗑 Telegram akkaunt uzildi.")

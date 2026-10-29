@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # Fragment to'lov valyutasi: ton | usdt (hamyondan nima yechiladi)
     fragment_pay_currency: str = "ton"
 
+    # Telegram akkaunt (Telethon) — telefon raqam orqali ulash uchun
+    tg_api_id: int = 0                 # my.telegram.org dan
+    tg_api_hash: str = ""              # my.telegram.org dan
+    tg_session: str = ""              # tayyor session string (ixtiyoriy, .env orqali)
+
     # TON to'lov (qabul qilish)
     ton_wallet_address: str = ""      # to'lovlar keladigan hamyon manzili
     usd_uzs_rate: float = 12800.0     # 1 USD = ? so'm (TON kursini hisoblash uchun)

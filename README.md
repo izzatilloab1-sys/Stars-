@@ -95,11 +95,38 @@ versiyasi o'zgarsa, `_try_fragment_api` / `_try_pyfragment` dagi chaqiruvni mosl
 `.env` ni tahrirlamasdan, **bot ichidan** akkaunt ulashingiz mumkin:
 
 `/admin` → **🔗 Akkaunt ulash**:
-- 🔑 **Hamyon seed** — 12/24 so'z (to'lov manbai; hamyonda TON bo'lsin)
+- 🔑 **Hamyon seed (Tonkeeper)** — 12/24 so'z (to'lov manbai; hamyonda TON bo'lsin)
+- 📱 **Telegram akkaunt (raqam)** — telefon raqam orqali ulash (pastga qarang)
 - 🍪 **Fragment cookie** — `stel_token`, `stel_ssid`, `stel_dt`, `stel_ton_token`
 - ⚙️ **Rejim** — `manual` ↔ `fragment` almashtirish
 - 💎 **Balansni tekshirish** — ulangan hamyonning TON balansi
 - 🗑 **Akkauntni uzish** — barcha maxfiy ma'lumotni o'chiradi
+
+### 📱 Telegram akkauntni telefon raqam orqali ulash (Telethon)
+
+Fragment'da Stars sotib olish uchun Telegram akkauntingizni ulashning **ikki usuli**:
+
+**Usul A — bot ichida (admin panel):**
+`/admin` → 🔗 Akkaunt ulash → 📱 Telegram akkaunt:
+1. 🔧 **api_id / api_hash** ni kiriting ([my.telegram.org](https://my.telegram.org) → API development tools, bepul)
+2. 📞 **Raqam orqali ulash** → telefon raqamingizni yuboring
+3. Telegramga kelgan **kodni** kiriting (xavfsizlik uchun `1 2 3 4 5` kabi bo'sh joy bilan)
+4. Agar 2FA parolingiz bo'lsa — parolni kiriting
+5. ✅ Session yaratilib, DB'ga saqlanadi
+
+**Usul B — alohida skript (xavfsizroq):**
+```bash
+python -m bot.login
+```
+Terminalda raqam + kod + 2FA so'raydi, so'ngra **session string** chiqaradi.
+Uni `.env` ga `TG_SESSION=...` deb yozing yoki admin panelda **📋 Session string joylash**
+orqali kiriting.
+
+- 🔍 **Ulanishni tekshirish** — session ishlayotganini va qaysi akkaunt ulanganini ko'rsatadi
+- 🗑 **Akkauntni uzish** — session'ni o'chiradi
+
+> ⚠️ Session string = akkauntingizga **to'liq kirish**. Hamyon seed kabi maxfiy saqlang.
+> Kod/parol/session yuborilgan xabarlar chatdan avtomatik o'chiriladi.
 
 > Admin paneldan kiritilgan qiymat `.env` dan **ustun** turadi (DB'da `settings`
 > jadvalida saqlanadi). Seed/cookie yuborilgan xabar avtomatik o'chiriladi.
@@ -166,12 +193,13 @@ stars_bot/
 ├── bot/
 │   ├── main.py            # bot kirish nuqtasi (polling)
 │   ├── webhook.py         # Click/Payme callback serveri (aiohttp)
+│   ├── login.py           # Telegram akkaunt session olish skripti (python -m bot.login)
 │   ├── config.py          # .env sozlamalari
 │   ├── middlewares.py     # ban middleware
 │   ├── database/          # modellar + DB funksiyalari (SQLite)
 │   ├── handlers/          # user, buy, payment, admin
 │   ├── keyboards/         # tugmalar
-│   ├── services/          # fragment (yetkazish), payment (Click/Payme), ton_payment (TON)
+│   ├── services/          # fragment, payment (Click/Payme), ton_payment, tg_account (Telethon)
 │   └── utils/             # FSM holatlar
 ├── requirements.txt
 ├── .env.example

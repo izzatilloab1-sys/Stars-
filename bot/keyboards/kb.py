@@ -72,13 +72,30 @@ def account_menu(status: dict) -> InlineKeyboardMarkup:
     cookie_mark = "✅" if status.get("cookie_set") else "❌"
     mode = status.get("mode", "manual")
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text=f"🔑 Hamyon seed {seed_mark}", callback_data="acc:seed"))
+    tg_mark = "✅" if status.get("tg_set") else "❌"
+    kb.row(InlineKeyboardButton(text=f"🔑 Hamyon seed (Tonkeeper) {seed_mark}", callback_data="acc:seed"))
+    kb.row(InlineKeyboardButton(text=f"📱 Telegram akkaunt (raqam) {tg_mark}", callback_data="acc:tg"))
     kb.row(InlineKeyboardButton(text=f"🍪 Fragment cookie {cookie_mark}", callback_data="acc:cookie"))
     mode_label = "fragment (avto)" if mode == "fragment" else "manual (qo'lda)"
     kb.row(InlineKeyboardButton(text=f"⚙️ Rejim: {mode_label}", callback_data="acc:mode"))
     kb.row(InlineKeyboardButton(text="💎 Balansni tekshirish", callback_data="acc:balance"))
     kb.row(InlineKeyboardButton(text="🗑 Akkauntni uzish", callback_data="acc:clear"))
     kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:back"))
+    return kb.as_markup()
+
+
+def tg_account_menu(status: dict) -> InlineKeyboardMarkup:
+    """Telegram akkaunt ulash menyusi."""
+    api_mark = "✅" if status.get("tg_api_set") else "❌"
+    tg_mark = "✅" if status.get("tg_set") else "❌"
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text=f"🔧 api_id / api_hash {api_mark}", callback_data="tg:api"))
+    kb.row(InlineKeyboardButton(text="📞 Raqam orqali ulash", callback_data="tg:phone"))
+    kb.row(InlineKeyboardButton(text="📋 Session string joylash", callback_data="tg:paste"))
+    if status.get("tg_set"):
+        kb.row(InlineKeyboardButton(text="🔍 Ulanishni tekshirish", callback_data="tg:check"))
+        kb.row(InlineKeyboardButton(text="🗑 Akkauntni uzish", callback_data="tg:clear"))
+    kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:account"))
     return kb.as_markup()
 
 
