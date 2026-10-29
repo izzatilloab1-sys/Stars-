@@ -568,6 +568,40 @@ async def has_completed_task(task_id: int, user_id: int) -> bool:
         return res.scalar_one_or_none() is not None
 
 
+async def get_referrals_with_task_counts(
+    referrer_id: int, limit: int = 50
+) -> tuple[list[tuple[User, int]], int]:
+    """Berilgan foydalanuvchi (referrer_id) chaqirgan referallarni qaytaradi.
+
+    Har bir element: (User, bajarilgan_zadaniyalar_soni).
+    Qaytaradi: (rows, total) — rows limit bilan cheklangan, total esa umumiy son."""
+    async with Session() as s:
+        total_res = await s.execute(
+            select(func.count())
+            .select_from(User)
+            .where(User.referrer_id == referrer_id)
+        )
+        total = int(total_res.scalar() or 0)
+
+        res = await s.execute(
+            select(User)
+            .where(User.referrer_id == referrer_id)
+            .order_by(User.created_at.desc())
+            .limit(limit)
+        )
+        users = list(res.scalars().all())
+
+        rows: list[tuple[User, int]] = []
+        for u in users:
+            cnt_res = await s.execute(
+                select(func.count())
+                .select_from(TaskCompletion)
+                .where(TaskCompletion.user_id == u.id)
+            )
+            rows.append((u, int(cnt_res.scalar() or 0)))
+        return rows, total
+
+
 async def maybe_reward_referrer_for_tasks(user_id: int) -> tuple[int, int] | None:
     """Referal (user_id) yetarlicha zadaniya bajargan bo'lsa, uni taklif qilgan
     odamga bir martalik Stars bonusini beradi.

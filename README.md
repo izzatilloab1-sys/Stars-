@@ -17,6 +17,76 @@ Avtomatik to'lov (Click / Payme / bonus balans), referal tizimi, promokod va adm
 - 🚚 **Fragment integratsiyasi** — `manual` (admin qo'lda) yoki `ton` (avtomatik) rejim
 - 🛠 **Admin panel** — statistika, promokod yaratish, balans qo'shish, broadcast, yetkazishni tasdiqlash
 - 🚫 **Ban tizimi** — middleware orqali
+- 🎁 **Bonus Stars tizimi** — zadaniya (reklama kanallariga obuna) orqali Stars ishlash, majburiy obuna, qo'lda yechib olish va referal bonusi (pastga qarang)
+
+---
+
+## 🎁 Bonus Stars tizimi (yangi)
+
+Pullik Stars sotuvidan **alohida**, foydalanuvchilar **bonus Stars** ham to'playdi.
+Bonus **faqat Stars ko'rinishida** (`User.stars_balance`) — so'm emas. Pul va TON
+orqali sotib olingan Stars esa avvalgidek Fragment orqali avtomatik yetkaziladi.
+
+### 🌟 Stars ishlash (zadaniya)
+- Admin `/admin` → **🌟 Stars ishlash (zadaniya)** orqali reklama kanallarini qo'shadi
+  va har bir zadaniya uchun necha ⭐ berilishini belgilaydi.
+- Bot kanalda **admin** bo'lishi shart — shunda obunani tekshira oladi (`getChatMember`)
+  va obuna linkini yarata oladi.
+- Foydalanuvchi **🌟 Stars ishlash** tugmasi orqali kanalga obuna bo'lib «✅ Tekshirish»
+  bosadi; obuna tasdiqlansa, Stars balansiga mukofot bir marta qo'shiladi.
+
+### 📢 Majburiy obuna (bot yaratgan unikal linklar)
+- Admin `/admin` → **📢 Majburiy obuna** orqali majburiy kanallarni qo'shadi.
+- Admin avval botni kanalga **admin** qiladi; keyin bot har bir kanal uchun **unikal
+  invite link** yaratadi (`createChatInviteLink`). Obunachilar aynan shu link orqali
+  qo'shilgani uchun bot orqali nechta odam kelganini hisoblash mumkin.
+- Foydalanuvchi botdan foydalanishdan oldin shu kanallarga obuna bo'lishi shart.
+
+### 💸 Stars yechib olish (qo'lda / ruchnoy)
+- Foydalanuvchi **💸 Yechib olish** → **15 / 25 / 50 ⭐** paketini tanlaydi
+  (minimal **15 ⭐**). Stars balansdan darhol ushlab qolinadi (hold).
+- Zayafka (so'rov) admin ulagan **yechib olish kanaliga** tushadi, tagida
+  **[✅ To'landi]** va **[❌ Bekor qilish]** tugmalari bo'ladi.
+- Admin Stars'ni **qo'lda** tashlaydi va «✅ To'landi» bosadi. Noqonuniy multiakkaunt
+  aniqlansa «❌ Bekor qilish» bosiladi — Stars foydalanuvchi balansiga qaytadi.
+
+### 👥 Referal bonusi (zadaniya chegarasi bilan)
+- Referal bonusi endi **Stars** ko'rinishida (`referral_stars`).
+- Taklif qilingan foydalanuvchi **belgilangan sondagi zadaniya** (`referral_task_threshold`,
+  default **3**) ni bajargach, uni taklif qilgan odamning Stars balansiga bir martalik
+  bonus qo'shiladi (`User.ref_bonus_given` bilan ikki marta berilishdan himoyalangan).
+- Admin `/admin` → **👥 Referallarni ko'rish** orqali istalgan foydalanuvchi ID sini
+  kiritib, u kimlarni chaqirganini ko'radi: har bir referalning **ID si, @username (niki)**
+  va bajargan zadaniyalari soni — multiakkauntni aniqlash uchun.
+
+### ⚙️ Yangi sozlamalar (admin panel / DB `settings`)
+| Kalit | Tavsif |
+|-------|--------|
+| `withdraw_channel_id` | Yechib olish zayafkalari tushadigan kanal (`-100...` yoki `@username`) |
+| `referral_task_threshold` | Referal bonusi uchun bajariladigan zadaniyalar soni (default 3) |
+| `ton_uzs_rate` | 1 TON = ? so'm (admin o'rnatsa, so'm→TON shunga tayanadi; 0/bo'sh = jonli API kursi) |
+| `referral_stars` | Referal bonusi (endi **Stars**da; 0 = foizli rejim) |
+
+> `/admin` → **⚙️ Narx va referal sozlamalari** dan: 1 Star narxi, referal Stars,
+> referal zadaniya chegarasi, **💎 TON kursi** va yechib olish kanali sozlanadi.
+
+### ⚠️ Mavjud bazani yangilash (MUHIM migratsiya eslatmasi)
+`init_db` faqat `Base.metadata.create_all` ni ishga tushiradi — u **yangi jadvallarni**
+(`tasks`, `task_completions`, `withdrawals`, `required_channels`) avtomatik yaratadi,
+lekin **mavjud `users` jadvaliga yangi ustunlar QO'SHMAYDI** (ALTER yo'q).
+
+Shu sababli **eski** `stars_bot.db` da `User` ning yangi ustunlari
+(`stars_balance`, `ref_bonus_given`) bo'lmaydi. Ikki yo'ldan birini tanlang:
+
+1. **Toza o'rnatish:** eski `stars_bot.db` faylini o'chiring — bot ishga tushganda
+   barcha jadvallar yangidan yaratiladi.
+2. **Qo'lda migratsiya:** bazani saqlab qolish uchun quyidagilarni bajaring:
+   ```sql
+   ALTER TABLE users ADD COLUMN stars_balance INTEGER DEFAULT 0;
+   ALTER TABLE users ADD COLUMN ref_bonus_given BOOLEAN DEFAULT 0;
+   ```
+   (Yangi jadvallar — `tasks`, `task_completions`, `withdrawals`, `required_channels` —
+   `create_all` tomonidan avtomatik yaratiladi, qo'lda yaratish shart emas.)
 
 ---
 
@@ -104,7 +174,10 @@ ko'rsatilgan @username ga yuboriladi.
 ### ⚙️ Narx va referal sozlamalari (admin panel)
 `/admin` → **⚙️ Narx va referal sozlamalari**:
 - 💰 **1 Star narxi** — bitta narx kiritiladi, barcha hisob shunga asoslanadi (DB'da saqlanadi, `.env` dan ustun)
-- 👥 **Referal Stars** — 1 ta referal uchun necha Stars mukofot (Stars × narx = so'mdagi bonus). `0` = foizli rejim.
+- 👥 **Referal Stars** — referal zadaniya chegarasini bajargach, taklif qilgan odamning bonus Stars balansiga qo'shiladigan ⭐ soni. `0` = foizli rejim.
+- 🎯 **Referal zadaniya chegarasi** — referal necha zadaniya bajarsa bonus beriladi (default 3).
+- 💎 **TON kursi** — 1 TON = ? so'm (o'rnatilsa so'm→TON shunga tayanadi, 0 = jonli API kursi).
+- 💸 **Yechib olish kanali** — qo'lda yechib olish zayafkalari tushadigan kanal.
 
 ### 👮 Adminlar va egalik (admin panel)
 `/admin` → **👮 Adminlar**:
@@ -180,7 +253,9 @@ Bot **to'rt** usulni qo'llab-quvvatlaydi:
 
 1. Foydalanuvchi «TON orqali» ni tanlaydi.
 2. Bot **hamyon manzili + aniq TON summasi + unikal izoh (memo)** beradi.
-   So'mdagi narx TON ga aylantiriladi (TON/USD — CoinGecko, USD/UZS — `.env` dagi `USD_UZS_RATE`).
+   So'mdagi narx TON ga aylantiriladi. Agar admin panelda **TON kursi** (`ton_uzs_rate`)
+   o'rnatilgan bo'lsa (`> 0`), aynan shu kurs ishlatiladi; aks holda TON/USD — CoinGecko,
+   USD/UZS — `.env` dagi `USD_UZS_RATE`.
 3. Foydalanuvchi o'z hamyonidan (Tonkeeper va h.k.) to'laydi.
 4. «Tekshirish» bosilganda bot `toncenter` API orqali kelgan tranzaksiyani
    izoh + summa bo'yicha topadi va buyurtmani avtomatik tasdiqlaydi.

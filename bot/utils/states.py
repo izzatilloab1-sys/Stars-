@@ -46,3 +46,7 @@ class AdminState(StatesGroup):
     req_channel = State()
     # Yechib olish (withdrawal) zayafka kanali
     set_withdraw_channel = State()
+    # TON kursi (1 TON = ? so'm)
+    set_ton_rate = State()
+    # Referal oversight (foydalanuvchi kimlarni chaqirganini ko'rish)
+    view_referrals = State()

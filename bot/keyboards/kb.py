@@ -126,6 +126,7 @@ def admin_menu(is_owner: bool = False) -> InlineKeyboardMarkup:
     kb.row(InlineKeyboardButton(text="📢 Xabar yuborish", callback_data="adm:broadcast"))
     kb.row(InlineKeyboardButton(text="🌟 Stars ishlash (zadaniya)", callback_data="adm:tasks"))
     kb.row(InlineKeyboardButton(text="📢 Majburiy obuna", callback_data="adm:subs"))
+    kb.row(InlineKeyboardButton(text="👥 Referallarni ko'rish", callback_data="adm:refs"))
     kb.row(InlineKeyboardButton(text="⚙️ Narx va referal sozlamalari", callback_data="adm:settings"))
     kb.row(InlineKeyboardButton(text="👮 Adminlar", callback_data="adm:admins"))
     if is_owner:
@@ -138,6 +139,7 @@ def settings_menu() -> InlineKeyboardMarkup:
     kb.row(InlineKeyboardButton(text="💰 1 Star narxini o'zgartirish", callback_data="set:price"))
     kb.row(InlineKeyboardButton(text="👥 Referal Stars sonini o'zgartirish", callback_data="set:refstars"))
     kb.row(InlineKeyboardButton(text="🎯 Referal zadaniya chegarasi", callback_data="set:refthreshold"))
+    kb.row(InlineKeyboardButton(text="💎 TON kursi (1 TON = ? so'm)", callback_data="set:tonrate"))
     kb.row(InlineKeyboardButton(text="💸 Yechib olish kanali", callback_data="adm:withdrawch"))
     kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:back"))
     return kb.as_markup()

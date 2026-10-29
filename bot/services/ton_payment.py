@@ -28,9 +28,20 @@ COINGECKO = "https://api.coingecko.com/api/v3/simple/price"
 async def get_ton_uzs_rate() -> float:
     """1 TON necha so'm turishini qaytaradi.
 
-    TON->USD coingecko'dan olinadi, USD->UZS esa .env dagi USD_UZS_RATE dan.
+    Avval admin panelda o'rnatilgan kurs (DB sozlama 'ton_uzs_rate') tekshiriladi:
+    agar u > 0 bo'lsa, aynan o'sha qiymat qaytariladi.
+    Aks holda TON->USD coingecko'dan olinadi, USD->UZS esa .env dagi USD_UZS_RATE dan.
     Agar API ishlamasa, .env dagi TON_UZS_FALLBACK ishlatiladi.
     """
+    # Admin tomonidan o'rnatilgan kursni birinchi o'ringa qo'yamiz (lazy import -> sirkular importdan qochish)
+    try:
+        from bot.database import db
+        admin_rate = await db.get_ton_uzs_rate_setting()
+        if admin_rate and admin_rate > 0:
+            return float(admin_rate)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Admin TON kursini o'qishda xatolik: %s. API ga o'tilmoqda.", e)
+
     try:
         async with aiohttp.ClientSession() as session:
             params = {"ids": "the-open-network", "vs_currencies": "usd"}

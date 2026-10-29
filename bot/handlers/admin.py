@@ -670,19 +670,29 @@ async def _settings_text() -> str:
     ref_stars = await db.get_referral_stars()
     threshold = await db.get_referral_task_threshold()
     withdraw_ch = await db.get_withdraw_channel_id()
+    ton_rate = await db.get_ton_uzs_rate_setting()
     ref_line = (
-        f"{ref_stars} Stars" if ref_stars > 0
+        f"{ref_stars} ⭐ (Stars)" if ref_stars > 0
         else f"o'chirilgan (foizli rejim: {settings.referral_bonus_percent}%)"
+    )
+    ton_line = (
+        f"{int(ton_rate):,} so'm (admin o'rnatgan)" if ton_rate and ton_rate > 0
+        else "avtomatik (API)"
     )
     return (
         f"⚙️ <b>Narx va referal sozlamalari</b>\n\n"
         f"💰 1 Star narxi: <b>{price:,} so'm</b>\n"
-        f"👥 Referal bonusi: <b>{ref_line}</b>\n"
+        f"👥 Referal bonusi (Stars): <b>{ref_line}</b>\n"
         f"🎯 Referal zadaniya chegarasi: <b>{threshold} ta</b>\n"
+        f"💎 1 TON kursi: <b>{ton_line}</b>\n"
         f"💸 Yechib olish kanali: <b>{withdraw_ch or '—'}</b>\n\n"
         f"ℹ️ Narxni o'zgartirsangiz, barcha yangi buyurtmalar yangi narxda hisoblanadi.\n"
-        f"Referal Stars > 0 bo'lsa, taklif qilingan foydalanuvchi <b>{threshold} ta</b> "
-        f"zadaniya bajargach, uni taklif qilgan odamga <b>{ref_stars} ⭐</b> beriladi."
+        f"Referal bonusi endi faqat <b>Stars</b> ko'rinishida (referrer bonus balansiga "
+        f"qo'shiladi). Referal Stars > 0 bo'lsa, taklif qilingan foydalanuvchi "
+        f"<b>{threshold} ta</b> zadaniya bajargach, uni taklif qilgan odamga "
+        f"<b>{ref_stars} ⭐</b> beriladi.\n"
+        f"💎 TON kursi o'rnatilsa, so'm → TON hisob-kitobi aynan shu kursda bo'ladi; "
+        f"aks holda jonli kurs (API) ishlatiladi."
     )
 
 
@@ -726,7 +736,9 @@ async def set_refstars_start(call: CallbackQuery, state: FSMContext):
         return
     await state.set_state(AdminState.set_ref_stars)
     await call.message.answer(
-        "👥 1 ta referal uchun necha Stars mukofot berilsin? (son)\n\n"
+        "👥 Referal bonusi: taklif qilingan foydalanuvchi zadaniya chegarasini "
+        "bajargach, uni taklif qilgan odamning bonus balansiga necha <b>Stars</b> "
+        "qo'shilsin? (son)\n\n"
         "0 kiritsangiz — foizli rejimga qaytadi."
     )
     await call.answer()
@@ -743,8 +755,105 @@ async def set_refstars_save(message: Message, state: FSMContext):
     await db.set_referral_stars(int(text))
     await state.clear()
     from bot.keyboards.kb import settings_menu
-    await message.answer(f"✅ Referal mukofoti {int(text)} Stars qilib o'rnatildi.")
+    await message.answer(f"✅ Referal bonusi {int(text)} ⭐ (Stars) qilib o'rnatildi.")
     await message.answer(await _settings_text(), reply_markup=settings_menu())
+
+
+# ---------- TON kursi (1 TON = ? so'm) ----------
+@router.callback_query(F.data == "set:tonrate")
+async def set_tonrate_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    current = await db.get_ton_uzs_rate_setting()
+    cur_line = f"{int(current):,} so'm" if current and current > 0 else "avtomatik (API)"
+    await state.set_state(AdminState.set_ton_rate)
+    await call.message.answer(
+        "💎 <b>TON kursi</b>\n\n"
+        f"Hozirgi: <b>{cur_line}</b>\n\n"
+        "1 TON necha so'm ekanini kiriting (son, masalan 42000).\n"
+        "0 kiritsangiz — jonli kurs (API) ishlatiladi."
+    )
+    await call.answer()
+
+
+@router.message(AdminState.set_ton_rate)
+async def set_tonrate_save(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip().replace(" ", "").replace(",", "")
+    try:
+        value = float(text)
+    except ValueError:
+        await message.answer("❌ Son kiriting (masalan 42000 yoki 0):")
+        return
+    if value < 0:
+        await message.answer("❌ Manfiy bo'lmasin. Qayta kiriting:")
+        return
+    await db.set_ton_uzs_rate(str(value))
+    await state.clear()
+    from bot.keyboards.kb import settings_menu
+    if value > 0:
+        await message.answer(f"✅ TON kursi 1 TON = {int(value):,} so'm qilib o'rnatildi.")
+    else:
+        await message.answer("✅ TON kursi avtomatik (API) rejimiga qaytarildi.")
+    await message.answer(await _settings_text(), reply_markup=settings_menu())
+
+
+# ==================== REFERALLARNI KO'RISH (ADMIN OVERSIGHT) ====================
+@router.callback_query(F.data == "adm:refs")
+async def adm_refs_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminState.view_referrals)
+    await call.message.answer(
+        "👥 <b>Referallarni ko'rish</b>\n\n"
+        "Foydalanuvchi ID sini kiriting — u kimlarni taklif qilganini ko'rsataman "
+        "(har bir referalning ID si, @username (niki) va bajargan zadaniyalari soni).\n\n"
+        "ℹ️ Agar noqonuniy ko'p akkauntlar (multiakkaunt) aniqlansa, ularga tegishli "
+        "yechib olish zayafkasini yechib olish kanalidagi «❌ Bekor qilish» tugmasi "
+        "orqali bekor qilishingiz mumkin (Stars balansga qaytadi)."
+    )
+    await call.answer()
+
+
+@router.message(AdminState.view_referrals)
+async def adm_refs_report(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip()
+    if not text.lstrip("-").isdigit():
+        await message.answer("❌ ID son bo'lishi kerak. Qayta kiriting:")
+        return
+    referrer_id = int(text)
+    await state.clear()
+
+    threshold = await db.get_referral_task_threshold()
+    rows, total = await db.get_referrals_with_task_counts(referrer_id, limit=50)
+    if total == 0:
+        await message.answer(
+            f"ℹ️ <code>{referrer_id}</code> hali hech kimni taklif qilmagan."
+        )
+        return
+
+    lines = [
+        f"👥 <b>{referrer_id}</b> chaqirgan referallar: jami <b>{total} ta</b>\n",
+    ]
+    for u, cnt in rows:
+        if u.username:
+            name = f"@{u.username}"
+        elif u.full_name:
+            name = u.full_name
+        else:
+            name = "—"
+        bonus_mark = "✅ bonus berilgan" if u.ref_bonus_given else "⏳ bonus berilmagan"
+        done_mark = "✅" if cnt >= threshold else "•"
+        lines.append(
+            f"{done_mark} <code>{u.id}</code> — {name}\n"
+            f"   📋 Zadaniya: <b>{cnt}</b>/{threshold} | {bonus_mark}"
+        )
+    if total > len(rows):
+        lines.append(f"\n… va yana {total - len(rows)} ta (faqat birinchi {len(rows)} tasi ko'rsatildi).")
+    await message.answer("\n".join(lines))
 
 
 async def _account_text(status: dict) -> str:
