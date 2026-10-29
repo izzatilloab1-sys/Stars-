@@ -162,24 +162,18 @@ async def check_payment(call: CallbackQuery):
     await _deliver_and_finish(call.bot, order_id)
 
 
-# ---------- Yetkazish + referal bonus ----------
+# ---------- Yetkazish ----------
 async def _deliver_and_finish(bot: Bot, order_id: int):
-    """To'langan buyurtmani yetkazadi va referal bonusni beradi."""
+    """To'langan buyurtmani yetkazadi.
+
+    Eslatma: referal bonusi FAQAT Stars ko'rinishida va referal belgilangan
+    sonli zadaniyani bajargach beriladi (bot.database.db.maybe_reward_referrer_for_tasks,
+    'Stars ishlash' oqimida chaqiriladi). Shuning uchun bu yerda eski so'm asosidagi
+    apply_referral_bonus CHAQIRILMAYDI — aks holda referrer ikki marta mukofotlanardi.
+    """
     order = await db.get_order(order_id)
     if not order:
         return
-
-    # Referal bonusni (bir marta, to'langanda) beramiz
-    result = await db.apply_referral_bonus(order_id, settings.referral_bonus_percent)
-    if result:
-        ref_id, bonus = result
-        try:
-            await bot.send_message(
-                ref_id,
-                f"🎁 Referalingiz buyurtma qildi! Sizga <b>{bonus:,} so'm</b> bonus qo'shildi.",
-            )
-        except Exception:  # noqa: BLE001
-            pass
 
     await db.set_order_status(order_id, OrderStatus.DELIVERING)
     delivery = await deliver_stars(order.target_username, order.stars)

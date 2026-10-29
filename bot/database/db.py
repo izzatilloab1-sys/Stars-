@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from bot.database.models import (
@@ -527,17 +528,31 @@ async def set_task_invite_link(task_id: int, link: str | None) -> None:
 async def complete_task_if_new(task_id: int, user_id: int, reward_stars: int) -> bool:
     """Agar (task,user) uchun TaskCompletion mavjud bo'lmasa, uni qo'shadi va
     stars_balance += reward_stars qiladi. Qaytaradi: True faqat birinchi marta
-    bajarilganda (takroriy to'lovdan himoya)."""
+    bajarilganda (takroriy to'lovdan himoya).
+
+    Poyga (race) himoyasi: avval tezkor mavjudlik tekshiruvi qilinadi, so'ng
+    TaskCompletion INSERT qilinib flush orqali bazaga yuboriladi. Bir vaqtda
+    kelgan ikkinchi bosilish (task_id, user_id) UNIQUE cheklovini buzadi va
+    IntegrityError bilan tushadi — bu holda hech narsa qo'shilmaydi va False
+    qaytariladi. Stars kreditlash faqat INSERT muvaffaqiyatli bo'lgandagina
+    amalga oshiriladi."""
     async with Session() as s:
         exists = await s.execute(
-            select(TaskCompletion).where(
+            select(TaskCompletion.id).where(
                 TaskCompletion.task_id == task_id,
                 TaskCompletion.user_id == user_id,
             )
         )
         if exists.scalar_one_or_none():
-            return False
+            return False  # tezkor yo'l (fast path)
         s.add(TaskCompletion(task_id=task_id, user_id=user_id))
+        try:
+            # UNIQUE cheklovini hoziroq ishga tushiramiz (commit'dan oldin)
+            await s.flush()
+        except IntegrityError:
+            # Poyga: boshqa bosilish allaqachon qo'shib ulgurgan
+            await s.rollback()
+            return False
         await s.execute(
             update(User)
             .where(User.id == user_id)

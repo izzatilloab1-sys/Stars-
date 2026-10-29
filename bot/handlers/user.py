@@ -36,6 +36,21 @@ async def _is_admin(user_id: int) -> bool:
     return owner is not None and user_id == owner
 
 
+async def _gate_blocked(message: Message) -> bool:
+    """Majburiy obuna darvozasi (gate): foydalanuvchi obuna bo'lmagan faol
+    kanallar bo'lsa, obuna tugmalarini ko'rsatadi va True qaytaradi (handler
+    to'xtatilishi kerak). Faol majburiy kanal bo'lmasa — False (hech qanday
+    o'zgarish yo'q, regressiyasiz)."""
+    missing = await missing_required_channels(message.bot, message.from_user.id)
+    if missing:
+        await message.answer(
+            "📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:",
+            reply_markup=subscribe_gate_kb(missing),
+        )
+        return True
+    return False
+
+
 def _parse_ref(args: str | None) -> int | None:
     """start=ref_123 ko'rinishidagi argumentdan referrer ID ni oladi."""
     if not args:
@@ -72,12 +87,7 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
 
     # Majburiy obuna tekshiruvi: faol kanallar bo'lsa va foydalanuvchi obuna
     # bo'lmagan bo'lsa — menyu o'rniga obuna tugmalari ko'rsatiladi.
-    missing = await missing_required_channels(message.bot, message.from_user.id)
-    if missing:
-        await message.answer(
-            "📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:",
-            reply_markup=subscribe_gate_kb(missing),
-        )
+    if await _gate_blocked(message):
         return
 
     await _send_welcome(message, message.from_user.id, message.from_user.full_name)
@@ -190,6 +200,9 @@ async def earn_stars(message: Message):
     if not user:
         await message.answer("Iltimos, /start bosing.")
         return
+    # Majburiy obuna darvozasi: obuna bo'lmasa, oldin obuna bo'lish talab qilinadi
+    if await _gate_blocked(message):
+        return
     tasks = await db.get_active_tasks()
     # foydalanuvchi allaqachon bajargan zadaniyalarni chiqarib tashlaymiz
     available = []
@@ -286,6 +299,9 @@ async def withdraw_entry(message: Message):
     user = await db.get_user(message.from_user.id)
     if not user:
         await message.answer("Iltimos, /start bosing.")
+        return
+    # Majburiy obuna darvozasi: obuna bo'lmasa, oldin obuna bo'lish talab qilinadi
+    if await _gate_blocked(message):
         return
     await message.answer(
         "💸 <b>Stars yechib olish</b>\n\n"

@@ -4,7 +4,17 @@ from __future__ import annotations
 import datetime as dt
 import enum
 
-from sqlalchemy import Boolean, BigInteger, DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy import (
+    Boolean,
+    BigInteger,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -152,8 +162,15 @@ class Task(Base):
 
 
 class TaskCompletion(Base):
-    """Har bir (zadaniya, foydalanuvchi) uchun bitta qator — takroriy to'lovning oldini oladi."""
+    """Har bir (zadaniya, foydalanuvchi) uchun bitta qator — takroriy to'lovning oldini oladi.
+
+    (task_id, user_id) uchun UNIQUE cheklovi bir vaqtda kelgan ikkita 'task:check'
+    bosilishi ikki marta hisob-kitob qilishiga yo'l qo'ymaydi (poyga sharoitida
+    ikkinchi INSERT IntegrityError bilan tushadi)."""
     __tablename__ = "task_completions"
+    __table_args__ = (
+        UniqueConstraint("task_id", "user_id", name="uq_task_completion_task_user"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[int] = mapped_column(Integer, ForeignKey("tasks.id"))
