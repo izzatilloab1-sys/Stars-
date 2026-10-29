@@ -8,25 +8,62 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 
-def main_menu() -> ReplyKeyboardMarkup:
+def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardBuilder()
     kb.row(KeyboardButton(text="⭐ Stars sotib olish"))
     kb.row(
+        KeyboardButton(text="💳 Balans to'ldirish"),
         KeyboardButton(text="👤 Profil"),
+    )
+    kb.row(
         KeyboardButton(text="👥 Referal"),
+        KeyboardButton(text="📦 Buyurtmalarim"),
     )
     kb.row(
         KeyboardButton(text="🎁 Promokod"),
-        KeyboardButton(text="📦 Buyurtmalarim"),
+        KeyboardButton(text="ℹ️ Yordam"),
     )
-    kb.row(KeyboardButton(text="ℹ️ Yordam"))
+    if is_admin:
+        kb.row(KeyboardButton(text="🛠 Admin panel"))
     return kb.as_markup(resize_keyboard=True)
+
+
+def topup_amount_kb() -> InlineKeyboardMarkup:
+    """Balans to'ldirish uchun tayyor summalar."""
+    kb = InlineKeyboardBuilder()
+    for amount in (50_000, 100_000, 200_000, 500_000):
+        kb.button(text=f"{amount:,} so'm", callback_data=f"topup:{amount}")
+    kb.button(text="✏️ Boshqa summa", callback_data="topup:custom")
+    kb.button(text="❌ Bekor qilish", callback_data="cancel")
+    kb.adjust(2, 2, 1, 1)
+    return kb.as_markup()
+
+
+def topup_payment_kb(amount: int) -> InlineKeyboardMarkup:
+    """Balans to'ldirish uchun to'lov usullari (bonus balanssiz)."""
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="💎 TON orqali", callback_data=f"tpay:ton:{amount}"))
+    kb.row(InlineKeyboardButton(text="💳 Click (so'm)", callback_data=f"tpay:click:{amount}"))
+    kb.row(InlineKeyboardButton(text="💳 Payme (so'm)", callback_data=f"tpay:payme:{amount}"))
+    kb.row(InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel"))
+    return kb.as_markup()
 
 
 def cancel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel")]]
     )
+
+
+def star_packages_kb() -> InlineKeyboardMarkup:
+    """Tayyor hadya paketlari (15/25/50 ...) + boshqa miqdor."""
+    kb = InlineKeyboardBuilder()
+    for pkg in (15, 25, 50, 100, 500, 1000):
+        kb.button(text=f"🎁 {pkg} ⭐", callback_data=f"pkg:{pkg}")
+    kb.button(text="✏️ Boshqa miqdor", callback_data="pkg:custom")
+    kb.button(text="❌ Bekor qilish", callback_data="cancel")
+    kb.adjust(3, 3, 1, 1)
+    return kb.as_markup()
 
 
 def payment_methods_kb(order_id: int) -> InlineKeyboardMarkup:
@@ -56,13 +93,43 @@ def confirm_order_kb(order_id: int) -> InlineKeyboardMarkup:
 
 
 # ---------- Admin ----------
-def admin_menu() -> InlineKeyboardMarkup:
+def admin_menu(is_owner: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="📊 Statistika", callback_data="adm:stats"))
     kb.row(InlineKeyboardButton(text="🔗 Akkaunt ulash", callback_data="adm:account"))
     kb.row(InlineKeyboardButton(text="🎁 Promokod yaratish", callback_data="adm:promo"))
     kb.row(InlineKeyboardButton(text="💰 Balans qo'shish", callback_data="adm:addbal"))
     kb.row(InlineKeyboardButton(text="📢 Xabar yuborish", callback_data="adm:broadcast"))
+    kb.row(InlineKeyboardButton(text="⚙️ Narx va referal sozlamalari", callback_data="adm:settings"))
+    kb.row(InlineKeyboardButton(text="👮 Adminlar", callback_data="adm:admins"))
+    if is_owner:
+        kb.row(InlineKeyboardButton(text="👑 Egalikni o'tkazish", callback_data="adm:transfer"))
+    return kb.as_markup()
+
+
+def settings_menu() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="💰 1 Star narxini o'zgartirish", callback_data="set:price"))
+    kb.row(InlineKeyboardButton(text="👥 Referal Stars sonini o'zgartirish", callback_data="set:refstars"))
+    kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:back"))
+    return kb.as_markup()
+
+
+def admins_menu(admins: list[dict], is_owner: bool) -> InlineKeyboardMarkup:
+    """Adminlar ro'yxati. Har biri yonida o'chirish tugmasi (faqat owner uchun)."""
+    kb = InlineKeyboardBuilder()
+    for a in admins:
+        label = f"{'👑 ' if a['is_owner'] else ''}{a['label']}"
+        if is_owner and not a["is_owner"] and not a["from_env"]:
+            kb.row(
+                InlineKeyboardButton(text=label, callback_data="noop"),
+                InlineKeyboardButton(text="🗑", callback_data=f"adm:deladmin:{a['id']}"),
+            )
+        else:
+            kb.row(InlineKeyboardButton(text=label, callback_data="noop"))
+    if is_owner:
+        kb.row(InlineKeyboardButton(text="➕ Admin qo'shish", callback_data="adm:addadmin"))
+    kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:back"))
     return kb.as_markup()
 
 

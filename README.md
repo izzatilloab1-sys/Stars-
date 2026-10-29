@@ -91,6 +91,29 @@ pip install pyfragment
 `fragment.py` ikkala kutubxona interfeysiga adapter bilan moslashgan. Kutubxona
 versiyasi o'zgarsa, `_try_fragment_api` / `_try_pyfragment` dagi chaqiruvni moslang.
 
+### 💳 Balans to'ldirish
+Foydalanuvchi asosiy menyudan **💳 Balans to'ldirish** → summa (yoki tayyor summalar)
+→ to'lov usuli (TON / Click / Payme) tanlaydi. To'lov tasdiqlangach, so'm balansga
+qo'shiladi va keyin Stars sotib olishda ishlatiladi.
+
+### 🎁 Hadya paketlari (15 / 25 / 50 ...)
+Stars sotib olishda @username kiritilgach, tayyor paketlar chiqadi: **15, 25, 50, 100,
+500, 1000 ⭐** yoki «✏️ Boshqa miqdor». Stars sizning **ulangan akkauntingizdan**
+ko'rsatilgan @username ga yuboriladi.
+
+### ⚙️ Narx va referal sozlamalari (admin panel)
+`/admin` → **⚙️ Narx va referal sozlamalari**:
+- 💰 **1 Star narxi** — bitta narx kiritiladi, barcha hisob shunga asoslanadi (DB'da saqlanadi, `.env` dan ustun)
+- 👥 **Referal Stars** — 1 ta referal uchun necha Stars mukofot (Stars × narx = so'mdagi bonus). `0` = foizli rejim.
+
+### 👮 Adminlar va egalik (admin panel)
+`/admin` → **👮 Adminlar**:
+- ➕ **Admin qo'shish** / 🗑 **Adminlikdan olish** (faqat bot egasi)
+- 👑 **Egalikni o'tkazish** — egalik huquqini boshqa foydalanuvchiga beradi (faqat ega ko'radi)
+
+> **Admin panel tugmasi** faqat adminlarga ko'rinadi (asosiy menyuda 🛠 Admin panel).
+> `.env` dagi `ADMIN_IDS`ning birinchisi — standart ega (owner), keyin egalikni o'tkazish mumkin.
+
 ### 🔗 Akkaunt ulash (admin panel orqali)
 `.env` ni tahrirlamasdan, **bot ichidan** akkaunt ulashingiz mumkin:
 

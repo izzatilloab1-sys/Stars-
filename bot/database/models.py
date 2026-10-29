@@ -91,3 +91,19 @@ class Setting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(2048), default="")
+
+
+class Topup(Base):
+    """Balans to'ldirish operatsiyasi."""
+    __tablename__ = "topups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    amount: Mapped[int] = mapped_column(Integer)  # so'm
+    status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.PENDING)
+    payment_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pay_comment: Mapped[str | None] = mapped_column(String(64), nullable=True)  # TON memo
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

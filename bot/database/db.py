@@ -11,6 +11,7 @@ from bot.database.models import (
     Promocode,
     PromoUse,
     Setting,
+    Topup,
     User,
 )
 
@@ -175,7 +176,14 @@ async def get_user_orders(user_id: int, limit: int = 10) -> list[Order]:
 # ---------- Referral bonus on paid order ----------
 async def apply_referral_bonus(order_id: int, bonus_percent: int) -> tuple[int, int] | None:
     """To'langan buyurtma uchun referrerga bonus beradi.
-    Qaytaradi: (referrer_id, bonus_amount) yoki None."""
+
+    Mukofot ikki usulda hisoblanadi:
+      - Agar settings['referral_stars'] > 0 bo'lsa: har referal BUYURTMASIGA
+        belgilangan Stars soni × 1 Star narxi = so'mdagi bonus beriladi.
+      - Aks holda: buyurtma summasidan bonus_percent foiz beriladi.
+
+    Qaytaradi: (referrer_id, bonus_amount_som) yoki None.
+    Eslatma: bonus faqat referral'ning BIRINCHI to'langan buyurtmasida beriladi."""
     async with Session() as s:
         order = await s.get(Order, order_id)
         if not order:
@@ -183,7 +191,29 @@ async def apply_referral_bonus(order_id: int, bonus_percent: int) -> tuple[int, 
         user = await s.get(User, order.user_id)
         if not user or user.referrer_id is None:
             return None
-        bonus = order.amount * bonus_percent // 100
+
+        # Bu referral'ning birinchi muvaffaqiyatli buyurtmasimi? (takroriy bonusdan himoya)
+        prev = await s.execute(
+            select(func.count()).select_from(Order).where(
+                Order.user_id == user.id,
+                Order.id != order_id,
+                Order.status.in_([OrderStatus.PAID, OrderStatus.DELIVERING, OrderStatus.DONE]),
+            )
+        )
+        if int(prev.scalar() or 0) > 0:
+            return None  # avval ham buyurtma qilgan — referal bonusi allaqachon berilgan
+
+        # Mukofotni hisoblaymiz
+        ref_stars_raw = await s.get(Setting, "referral_stars")
+        ref_stars = int(ref_stars_raw.value) if ref_stars_raw and ref_stars_raw.value.isdigit() else 0
+        if ref_stars > 0:
+            price_raw = await s.get(Setting, "price_per_star")
+            from bot.config import settings as _s
+            price = int(price_raw.value) if price_raw and price_raw.value.isdigit() else _s.price_per_star
+            bonus = ref_stars * price
+        else:
+            bonus = order.amount * bonus_percent // 100
+
         if bonus <= 0:
             return None
         await s.execute(
@@ -232,6 +262,58 @@ async def redeem_promocode(user_id: int, code: str) -> tuple[bool, str, int]:
         return True, f"Promokod qabul qilindi! +{promo.bonus_amount:,} so'm bonus.", promo.bonus_amount
 
 
+# ---------- Topup (balans to'ldirish) ----------
+async def create_topup(user_id: int, amount: int, payment_method: str) -> Topup:
+    async with Session() as s:
+        t = Topup(user_id=user_id, amount=amount, payment_method=payment_method,
+                  status=OrderStatus.PENDING)
+        s.add(t)
+        await s.commit()
+        await s.refresh(t)
+        return t
+
+
+async def get_topup(topup_id: int) -> Topup | None:
+    async with Session() as s:
+        return await s.get(Topup, topup_id)
+
+
+async def set_topup_field(topup_id: int, **fields) -> None:
+    async with Session() as s:
+        await s.execute(update(Topup).where(Topup.id == topup_id).values(**fields))
+        await s.commit()
+
+
+async def complete_topup_if_pending(topup_id: int, payment_id: str | None = None) -> bool:
+    """Topup PENDING bo'lsa, atomik PAID qiladi va foydalanuvchi balansiga qo'shadi.
+    Qaytaradi: True — agar shu chaqiruv bajargan bo'lsa (ikki marta qo'shishdan himoya)."""
+    async with Session() as s:
+        values: dict = {"status": OrderStatus.PAID}
+        if payment_id is not None:
+            values["payment_id"] = payment_id
+        res = await s.execute(
+            update(Topup)
+            .where(Topup.id == topup_id, Topup.status == OrderStatus.PENDING)
+            .values(**values)
+        )
+        if res.rowcount == 0:
+            await s.commit()
+            return False
+        # balansga qo'shamiz
+        t = await s.get(Topup, topup_id)
+        await s.execute(
+            update(User).where(User.id == t.user_id).values(balance=User.balance + t.amount)
+        )
+        await s.commit()
+        return True
+
+
+async def get_topup_by_comment(comment: str) -> Topup | None:
+    async with Session() as s:
+        res = await s.execute(select(Topup).where(Topup.pay_comment == comment))
+        return res.scalar_one_or_none()
+
+
 # ---------- Settings (admin panel orqali sozlash) ----------
 async def set_setting(key: str, value: str) -> None:
     async with Session() as s:
@@ -253,6 +335,58 @@ async def get_all_settings() -> dict[str, str]:
     async with Session() as s:
         res = await s.execute(select(Setting))
         return {row.key: row.value for row in res.scalars().all()}
+
+
+# ---------- Admin / Owner boshqaruvi ----------
+async def get_db_admins() -> list[int]:
+    """DB'da qo'shilgan admin ID'lari (settings['admins'] = '111,222')."""
+    raw = await get_setting("admins", "")
+    return [int(x) for x in raw.split(",") if x.strip().isdigit()]
+
+
+async def add_db_admin(user_id: int) -> None:
+    admins = await get_db_admins()
+    if user_id not in admins:
+        admins.append(user_id)
+        await set_setting("admins", ",".join(str(x) for x in admins))
+
+
+async def remove_db_admin(user_id: int) -> None:
+    admins = await get_db_admins()
+    admins = [x for x in admins if x != user_id]
+    await set_setting("admins", ",".join(str(x) for x in admins))
+
+
+async def get_owner() -> int | None:
+    """Bot egasi ID (settings['owner']). O'rnatilmagan bo'lsa None."""
+    raw = await get_setting("owner", "")
+    return int(raw) if raw.isdigit() else None
+
+
+async def set_owner(user_id: int) -> None:
+    await set_setting("owner", str(user_id))
+
+
+# ---------- Narx va referal sozlamalari (admin panel orqali) ----------
+async def get_price_per_star() -> int:
+    """1 Star narxi (so'm). DB -> .env."""
+    from bot.config import settings as _s
+    raw = await get_setting("price_per_star", "")
+    return int(raw) if raw.isdigit() else _s.price_per_star
+
+
+async def set_price_per_star(price: int) -> None:
+    await set_setting("price_per_star", str(price))
+
+
+async def get_referral_stars() -> int:
+    """1 ta referal uchun beriladigan Stars soni (default 0)."""
+    raw = await get_setting("referral_stars", "")
+    return int(raw) if raw.isdigit() else 0
+
+
+async def set_referral_stars(stars: int) -> None:
+    await set_setting("referral_stars", str(stars))
 
 
 # ---------- Stats (admin) ----------

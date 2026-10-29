@@ -21,20 +21,38 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-def is_admin(user_id: int) -> bool:
-    return user_id in settings.admin_id_list
+async def is_admin(user_id: int) -> bool:
+    """Admin: .env ADMIN_IDS, DB'dagi adminlar yoki owner."""
+    if user_id in settings.admin_id_list:
+        return True
+    if user_id in await db.get_db_admins():
+        return True
+    owner = await db.get_owner()
+    return owner is not None and user_id == owner
+
+
+async def is_owner(user_id: int) -> bool:
+    """Owner: settings['owner'], o'rnatilmagan bo'lsa .env'dagi BIRINCHI admin."""
+    owner = await db.get_owner()
+    if owner is not None:
+        return user_id == owner
+    # owner hali o'rnatilmagan: .env'dagi birinchi admin owner hisoblanadi
+    admins = settings.admin_id_list
+    return bool(admins) and user_id == admins[0]
 
 
 @router.message(Command("admin"))
+@router.message(F.text == "🛠 Admin panel")
 async def admin_panel(message: Message):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
-    await message.answer("🛠 <b>Admin panel</b>", reply_markup=admin_menu())
+    owner = await is_owner(message.from_user.id)
+    await message.answer("🛠 <b>Admin panel</b>", reply_markup=admin_menu(owner))
 
 
 @router.callback_query(F.data == "adm:stats")
 async def adm_stats(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     s = await db.get_stats()
     await call.message.edit_text(
@@ -51,7 +69,7 @@ async def adm_stats(call: CallbackQuery):
 # ---------- Promokod yaratish ----------
 @router.callback_query(F.data == "adm:promo")
 async def adm_promo_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.set_state(AdminState.promo_code)
     await call.message.answer("🎁 Promokod nomini kiriting (masalan: NEWYEAR2026):")
@@ -60,7 +78,7 @@ async def adm_promo_start(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminState.promo_code)
 async def adm_promo_code(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     await state.update_data(code=message.text.strip())
     await state.set_state(AdminState.promo_bonus)
@@ -103,7 +121,7 @@ async def adm_promo_uses(message: Message, state: FSMContext):
 # ---------- Balans qo'shish ----------
 @router.callback_query(F.data == "adm:addbal")
 async def adm_addbal_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.set_state(AdminState.add_balance_user)
     await call.message.answer("👤 Foydalanuvchi ID sini kiriting:")
@@ -150,7 +168,7 @@ async def adm_addbal_amount(message: Message, state: FSMContext):
 # ---------- Broadcast ----------
 @router.callback_query(F.data == "adm:broadcast")
 async def adm_broadcast_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.set_state(AdminState.broadcast)
     await call.message.answer("📢 Yubormoqchi bo'lgan xabaringizni yozing:")
@@ -159,7 +177,7 @@ async def adm_broadcast_start(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminState.broadcast)
 async def adm_broadcast_send(message: Message, state: FSMContext, bot: Bot):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     await state.clear()
     async with db.Session() as s:
@@ -179,7 +197,7 @@ async def adm_broadcast_send(message: Message, state: FSMContext, bot: Bot):
 # ---------- Yetkazishni tasdiqlash (manual rejim) ----------
 @router.callback_query(F.data.startswith("deliver:"))
 async def deliver_action(call: CallbackQuery, bot: Bot):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         await call.answer("Ruxsat yo'q.", show_alert=True)
         return
     _, action, order_id_s = call.data.split(":")
@@ -221,11 +239,96 @@ async def deliver_action(call: CallbackQuery, bot: Bot):
 # ==================== AKKAUNT ULASH ====================
 @router.callback_query(F.data == "adm:back")
 async def adm_back(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.clear()
-    await call.message.edit_text("🛠 <b>Admin panel</b>", reply_markup=admin_menu())
+    owner = await is_owner(call.from_user.id)
+    await call.message.edit_text("🛠 <b>Admin panel</b>", reply_markup=admin_menu(owner))
     await call.answer()
+
+
+@router.callback_query(F.data == "noop")
+async def noop_cb(call: CallbackQuery):
+    await call.answer()
+
+
+# ==================== NARX / REFERAL SOZLAMALARI ====================
+async def _settings_text() -> str:
+    price = await db.get_price_per_star()
+    ref_stars = await db.get_referral_stars()
+    ref_line = (
+        f"{ref_stars} Stars" if ref_stars > 0
+        else f"o'chirilgan (foizli rejim: {settings.referral_bonus_percent}%)"
+    )
+    return (
+        f"⚙️ <b>Narx va referal sozlamalari</b>\n\n"
+        f"💰 1 Star narxi: <b>{price:,} so'm</b>\n"
+        f"👥 1 referalga mukofot: <b>{ref_line}</b>\n\n"
+        f"ℹ️ Narxni o'zgartirsangiz, barcha yangi buyurtmalar yangi narxda hisoblanadi.\n"
+        f"Referal Stars > 0 bo'lsa, har yangi referal birinchi buyurtma qilganda "
+        f"shuncha Stars qiymatida (Stars × narx) bonus beradi."
+    )
+
+
+@router.callback_query(F.data == "adm:settings")
+async def adm_settings(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.clear()
+    from bot.keyboards.kb import settings_menu
+    await call.message.edit_text(await _settings_text(), reply_markup=settings_menu())
+    await call.answer()
+
+
+@router.callback_query(F.data == "set:price")
+async def set_price_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminState.set_price)
+    await call.message.answer("💰 1 ta Star'ning yangi narxini kiriting (so'mda, faqat son):")
+    await call.answer()
+
+
+@router.message(AdminState.set_price)
+async def set_price_save(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    text = message.text.strip().replace(" ", "")
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("❌ Musbat son kiriting:")
+        return
+    await db.set_price_per_star(int(text))
+    await state.clear()
+    from bot.keyboards.kb import settings_menu
+    await message.answer(f"✅ 1 Star narxi {int(text):,} so'm qilib o'rnatildi.")
+    await message.answer(await _settings_text(), reply_markup=settings_menu())
+
+
+@router.callback_query(F.data == "set:refstars")
+async def set_refstars_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminState.set_ref_stars)
+    await call.message.answer(
+        "👥 1 ta referal uchun necha Stars mukofot berilsin? (son)\n\n"
+        "0 kiritsangiz — foizli rejimga qaytadi."
+    )
+    await call.answer()
+
+
+@router.message(AdminState.set_ref_stars)
+async def set_refstars_save(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    text = message.text.strip().replace(" ", "")
+    if not text.isdigit():
+        await message.answer("❌ Son kiriting (0 yoki undan katta):")
+        return
+    await db.set_referral_stars(int(text))
+    await state.clear()
+    from bot.keyboards.kb import settings_menu
+    await message.answer(f"✅ Referal mukofoti {int(text)} Stars qilib o'rnatildi.")
+    await message.answer(await _settings_text(), reply_markup=settings_menu())
 
 
 async def _account_text(status: dict) -> str:
@@ -251,7 +354,7 @@ async def _account_text(status: dict) -> str:
 
 @router.callback_query(F.data == "adm:account")
 async def adm_account(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.clear()
     status = await fragment_service.get_account_status()
@@ -262,7 +365,7 @@ async def adm_account(call: CallbackQuery, state: FSMContext):
 # ---------- Seed kiritish ----------
 @router.callback_query(F.data == "acc:seed")
 async def acc_seed_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.set_state(AdminState.set_seed)
     await call.message.answer(
@@ -275,7 +378,7 @@ async def acc_seed_start(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminState.set_seed)
 async def acc_seed_save(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     seed = message.text.strip()
     words = seed.split()
@@ -302,7 +405,7 @@ async def acc_seed_save(message: Message, state: FSMContext):
 # ---------- Cookie kiritish (4 qadam) ----------
 @router.callback_query(F.data == "acc:cookie")
 async def acc_cookie_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.set_state(AdminState.set_cookie_token)
     await call.message.answer(
@@ -318,7 +421,7 @@ async def acc_cookie_start(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminState.set_cookie_token)
 async def acc_cookie_token(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     await db.set_setting("fragment_stel_token", message.text.strip())
     await state.set_state(AdminState.set_cookie_ssid)
@@ -331,7 +434,7 @@ async def acc_cookie_token(message: Message, state: FSMContext):
 
 @router.message(AdminState.set_cookie_ssid)
 async def acc_cookie_ssid(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     await db.set_setting("fragment_stel_ssid", message.text.strip())
     await state.set_state(AdminState.set_cookie_dt)
@@ -344,7 +447,7 @@ async def acc_cookie_ssid(message: Message, state: FSMContext):
 
 @router.message(AdminState.set_cookie_dt)
 async def acc_cookie_dt(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     await db.set_setting("fragment_stel_dt", message.text.strip())
     await state.set_state(AdminState.set_cookie_ton)
@@ -357,7 +460,7 @@ async def acc_cookie_dt(message: Message, state: FSMContext):
 
 @router.message(AdminState.set_cookie_ton)
 async def acc_cookie_ton(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     await db.set_setting("fragment_stel_ton_token", message.text.strip())
     await state.clear()
@@ -373,7 +476,7 @@ async def acc_cookie_ton(message: Message, state: FSMContext):
 # ---------- Rejimni almashtirish ----------
 @router.callback_query(F.data == "acc:mode")
 async def acc_mode_toggle(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     current = await fragment_service.get_fragment_mode()
     new_mode = "manual" if current == "fragment" else "fragment"
@@ -386,7 +489,7 @@ async def acc_mode_toggle(call: CallbackQuery):
 # ---------- Balansni tekshirish ----------
 @router.callback_query(F.data == "acc:balance")
 async def acc_balance(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await call.answer("⏳ Tekshirilmoqda...")
     bal = await fragment_service.get_wallet_balance()
@@ -399,7 +502,7 @@ async def acc_balance(call: CallbackQuery):
 # ---------- Akkauntni uzish ----------
 @router.callback_query(F.data == "acc:clear")
 async def acc_clear(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     for key in (
         "ton_wallet_mnemonic", "fragment_stel_token", "fragment_stel_ssid",
@@ -440,7 +543,7 @@ async def _tg_text(status: dict) -> str:
 
 @router.callback_query(F.data == "acc:tg")
 async def acc_tg(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.clear()
     status = await fragment_service.get_account_status()
@@ -453,7 +556,7 @@ async def acc_tg(call: CallbackQuery, state: FSMContext):
 # ---------- api_id / api_hash ----------
 @router.callback_query(F.data == "tg:api")
 async def tg_api_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.set_state(AdminState.tg_api_id)
     await call.message.answer("🔧 <b>api_id</b> ni kiriting (son, my.telegram.org dan):")
@@ -462,7 +565,7 @@ async def tg_api_start(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminState.tg_api_id)
 async def tg_api_id_save(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     if not message.text.strip().isdigit():
         await message.answer("❌ api_id son bo'lishi kerak. Qayta kiriting:")
@@ -474,7 +577,7 @@ async def tg_api_id_save(message: Message, state: FSMContext):
 
 @router.message(AdminState.tg_api_hash)
 async def tg_api_hash_save(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     await db.set_setting("tg_api_hash", message.text.strip())
     await state.clear()
@@ -491,7 +594,7 @@ async def tg_api_hash_save(message: Message, state: FSMContext):
 # ---------- Raqam orqali ulash ----------
 @router.callback_query(F.data == "tg:phone")
 async def tg_phone_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     status = await fragment_service.get_account_status()
     if not status.get("tg_api_set"):
@@ -506,7 +609,7 @@ async def tg_phone_start(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminState.tg_phone)
 async def tg_phone_submit(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     phone = message.text.strip().replace(" ", "")
     flow = tg_account.LoginFlow()
@@ -527,7 +630,7 @@ async def tg_phone_submit(message: Message, state: FSMContext):
 
 @router.message(AdminState.tg_code)
 async def tg_code_submit(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     flow = _login_flows.get(message.from_user.id)
     if not flow:
@@ -564,7 +667,7 @@ async def tg_code_submit(message: Message, state: FSMContext):
 
 @router.message(AdminState.tg_password)
 async def tg_password_submit(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     flow = _login_flows.get(message.from_user.id)
     if not flow:
@@ -592,7 +695,7 @@ async def tg_password_submit(message: Message, state: FSMContext):
 # ---------- Session string joylash ----------
 @router.callback_query(F.data == "tg:paste")
 async def tg_paste_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await state.set_state(AdminState.tg_session_paste)
     await call.message.answer(
@@ -603,7 +706,7 @@ async def tg_paste_start(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminState.tg_session_paste)
 async def tg_paste_save(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
     session_str = message.text.strip()
     await state.clear()
@@ -628,7 +731,7 @@ async def tg_paste_save(message: Message, state: FSMContext):
 # ---------- Tekshirish / uzish ----------
 @router.callback_query(F.data == "tg:check")
 async def tg_check(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await call.answer("⏳ Tekshirilmoqda...")
     info = await tg_account.check_session()
@@ -644,10 +747,169 @@ async def tg_check(call: CallbackQuery):
 
 @router.callback_query(F.data == "tg:clear")
 async def tg_clear(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await tg_account.clear_session()
     status = await fragment_service.get_account_status()
     await call.message.edit_text(await _tg_text(status), reply_markup=tg_account_menu(status),
                                  disable_web_page_preview=True)
     await call.answer("🗑 Telegram akkaunt uzildi.")
+
+
+# ==================== ADMINLAR BOSHQARUVI ====================
+async def _build_admins_list() -> list[dict]:
+    """Barcha adminlar ro'yxati (env + DB) + owner belgisi bilan."""
+    owner = await db.get_owner()
+    if owner is None and settings.admin_id_list:
+        owner = settings.admin_id_list[0]  # default owner
+    env_ids = settings.admin_id_list
+    db_ids = await db.get_db_admins()
+
+    seen: dict[int, dict] = {}
+    for uid in env_ids:
+        seen[uid] = {"id": uid, "from_env": True, "is_owner": uid == owner}
+    for uid in db_ids:
+        if uid in seen:
+            continue
+        seen[uid] = {"id": uid, "from_env": False, "is_owner": uid == owner}
+    if owner is not None and owner not in seen:
+        seen[owner] = {"id": owner, "from_env": False, "is_owner": True}
+
+    result = []
+    for uid, info in seen.items():
+        u = await db.get_user(uid)
+        if u and u.username:
+            label = f"@{u.username}"
+        elif u and u.full_name:
+            label = f"{u.full_name} ({uid})"
+        else:
+            label = str(uid)
+        info["label"] = label
+        result.append(info)
+    # owner birinchi
+    result.sort(key=lambda x: (not x["is_owner"], x["id"]))
+    return result
+
+
+@router.callback_query(F.data == "adm:admins")
+async def adm_admins(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.clear()
+    from bot.keyboards.kb import admins_menu
+    owner = await is_owner(call.from_user.id)
+    admins = await _build_admins_list()
+    text = (
+        "👮 <b>Adminlar</b>\n\n"
+        "👑 — bot egasi (owner)\n"
+        "🔒 .env dagi adminlarni bu yerdan o'chirib bo'lmaydi.\n\n"
+        + ("Admin qo'shish/o'chirish faqat egaga ruxsat etilgan." if owner
+           else "Faqat bot egasi admin qo'sha/o'chira oladi.")
+    )
+    await call.message.edit_text(text, reply_markup=admins_menu(admins, owner))
+    await call.answer()
+
+
+@router.callback_query(F.data == "adm:addadmin")
+async def adm_addadmin_start(call: CallbackQuery, state: FSMContext):
+    if not await is_owner(call.from_user.id):
+        await call.answer("Faqat bot egasi admin qo'sha oladi.", show_alert=True)
+        return
+    await state.set_state(AdminState.add_admin)
+    await call.message.answer(
+        "➕ Yangi admin Telegram ID sini kiriting.\n\n"
+        "ℹ️ ID ni bilish uchun foydalanuvchi @userinfobot ga yozishi mumkin. "
+        "U avval botni /start qilgan bo'lsa yaxshi."
+    )
+    await call.answer()
+
+
+@router.message(AdminState.add_admin)
+async def adm_addadmin_save(message: Message, state: FSMContext):
+    if not await is_owner(message.from_user.id):
+        return
+    if not message.text.strip().isdigit():
+        await message.answer("❌ ID son bo'lishi kerak. Qayta kiriting:")
+        return
+    uid = int(message.text.strip())
+    await db.add_db_admin(uid)
+    await state.clear()
+    await message.answer(f"✅ {uid} admin qilib qo'shildi.")
+    try:
+        await message.bot.send_message(uid, "🎉 Siz bu botga admin qilib tayinlandingiz! /admin")
+    except Exception:  # noqa: BLE001
+        pass
+    from bot.keyboards.kb import admins_menu
+    admins = await _build_admins_list()
+    await message.answer(
+        "👮 <b>Adminlar</b>", reply_markup=admins_menu(admins, True)
+    )
+
+
+@router.callback_query(F.data.startswith("adm:deladmin:"))
+async def adm_deladmin(call: CallbackQuery):
+    if not await is_owner(call.from_user.id):
+        await call.answer("Faqat bot egasi admin o'chira oladi.", show_alert=True)
+        return
+    uid = int(call.data.split(":")[2])
+    owner = await db.get_owner() or (settings.admin_id_list[0] if settings.admin_id_list else None)
+    if uid == owner:
+        await call.answer("Egani o'chirib bo'lmaydi.", show_alert=True)
+        return
+    await db.remove_db_admin(uid)
+    from bot.keyboards.kb import admins_menu
+    admins = await _build_admins_list()
+    await call.message.edit_text("👮 <b>Adminlar</b>", reply_markup=admins_menu(admins, True))
+    await call.answer("🗑 Adminlikdan olindi.")
+    try:
+        await call.bot.send_message(uid, "ℹ️ Sizning admin huquqingiz bekor qilindi.")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# ==================== EGALIKNI O'TKAZISH ====================
+@router.callback_query(F.data == "adm:transfer")
+async def adm_transfer_start(call: CallbackQuery, state: FSMContext):
+    if not await is_owner(call.from_user.id):
+        await call.answer("Faqat bot egasi egalikni o'tkaza oladi.", show_alert=True)
+        return
+    await state.set_state(AdminState.transfer_owner)
+    await call.message.answer(
+        "👑 <b>Egalikni o'tkazish</b>\n\n"
+        "⚠️ DIQQAT: egalikni o'tkazsangiz, siz oddiy adminga aylanasiz. "
+        "Yangi ega botni to'liq boshqaradi (admin qo'shish/o'chirish, akkaunt ulash).\n\n"
+        "Yangi ega Telegram ID sini kiriting (bekor qilish uchun /cancel):"
+    )
+    await call.answer()
+
+
+@router.message(AdminState.transfer_owner)
+async def adm_transfer_confirm(message: Message, state: FSMContext):
+    if not await is_owner(message.from_user.id):
+        return
+    if message.text.strip() == "/cancel":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.")
+        return
+    if not message.text.strip().isdigit():
+        await message.answer("❌ ID son bo'lishi kerak. Qayta kiriting (yoki /cancel):")
+        return
+    new_owner = int(message.text.strip())
+    old_owner = message.from_user.id
+    await db.set_owner(new_owner)
+    # yangi ega adminlar ro'yxatiga ham qo'shilsin
+    await db.add_db_admin(new_owner)
+    # eski ega admin bo'lib qoladi
+    await db.add_db_admin(old_owner)
+    await state.clear()
+    await message.answer(
+        f"👑 Egalik <code>{new_owner}</code> ga o'tkazildi.\n"
+        f"Siz endi oddiy adminsiz."
+    )
+    try:
+        await message.bot.send_message(
+            new_owner,
+            "👑 Tabriklaymiz! Siz bu botning yangi egasiga (owner) aylandingiz. /admin",
+        )
+    except Exception:  # noqa: BLE001
+        pass

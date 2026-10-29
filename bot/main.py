@@ -10,7 +10,7 @@ from aiogram.enums import ParseMode
 
 from bot.config import settings
 from bot.database import db
-from bot.handlers import admin, buy, payment, user
+from bot.handlers import admin, buy, payment, topup, user
 from bot.middlewares import BanMiddleware
 
 logging.basicConfig(
@@ -37,6 +37,7 @@ async def main() -> None:
     # Routerlar
     dp.include_router(admin.router)
     dp.include_router(buy.router)
+    dp.include_router(topup.router)
     dp.include_router(payment.router)
     dp.include_router(user.router)  # user oxirida (umumiy matnli tugmalar)
 

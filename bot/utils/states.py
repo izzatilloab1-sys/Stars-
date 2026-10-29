@@ -32,3 +32,9 @@ class AdminState(StatesGroup):
     tg_code = State()
     tg_password = State()
     tg_session_paste = State()
+    # Admin boshqaruvi
+    add_admin = State()
+    transfer_owner = State()
+    # Narx / referal sozlamalari
+    set_price = State()
+    set_ref_stars = State()

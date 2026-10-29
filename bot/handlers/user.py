@@ -14,6 +14,16 @@ from bot.utils.states import PromoState
 router = Router()
 
 
+async def _is_admin(user_id: int) -> bool:
+    """Admin: .env ADMIN_IDS, DB adminlar yoki owner."""
+    if user_id in settings.admin_id_list:
+        return True
+    if user_id in await db.get_db_admins():
+        return True
+    owner = await db.get_owner()
+    return owner is not None and user_id == owner
+
+
 def _parse_ref(args: str | None) -> int | None:
     """start=ref_123 ko'rinishidagi argumentdan referrer ID ni oladi."""
     if not args:
@@ -48,14 +58,15 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
         except Exception:  # noqa: BLE001
             pass
 
+    price = await db.get_price_per_star()
     await message.answer(
         f"👋 Assalomu alaykum, <b>{message.from_user.full_name}</b>!\n\n"
         f"⭐ Bu bot orqali istalgan Telegram foydalanuvchisiga <b>Telegram Stars</b> "
         f"sotib olishingiz mumkin.\n\n"
-        f"💰 Narx: <b>{settings.price_per_star:,} so'm</b> / 1 Star\n"
+        f"💰 Narx: <b>{price:,} so'm</b> / 1 Star\n"
         f"📦 Minimal buyurtma: {settings.min_stars} Stars\n\n"
         f"Quyidagi menyudan kerakli bo'limni tanlang 👇",
-        reply_markup=main_menu(),
+        reply_markup=main_menu(await _is_admin(message.from_user.id)),
     )
 
 
@@ -83,10 +94,20 @@ async def referral(message: Message):
     me = await message.bot.get_me()
     link = f"https://t.me/{me.username}?start=ref_{user.id}"
     refs = await db.count_referrals(user.id)
+    ref_stars = await db.get_referral_stars()
+    if ref_stars > 0:
+        reward_line = (
+            f"Do'stlaringizni taklif qiling — ularning har biri birinchi buyurtma "
+            f"qilganda sizga <b>{ref_stars} Stars</b> qiymatida bonus beriladi! ⭐"
+        )
+    else:
+        reward_line = (
+            f"Do'stlaringizni taklif qiling va ular buyurtma qilganda "
+            f"<b>{settings.referral_bonus_percent}%</b> bonus oling!"
+        )
     await message.answer(
         f"👥 <b>Referal dasturi</b>\n\n"
-        f"Do'stlaringizni taklif qiling va ular buyurtma qilganda "
-        f"har bir buyurtmadan <b>{settings.referral_bonus_percent}%</b> bonus oling!\n\n"
+        f"{reward_line}\n\n"
         f"🔗 Sizning havolangiz:\n<code>{link}</code>\n\n"
         f"👤 Taklif qilganlaringiz: <b>{refs} ta</b>\n"
         f"💰 Jami bonus balans: <b>{user.balance:,} so'm</b>",
