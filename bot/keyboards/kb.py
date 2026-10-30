@@ -136,7 +136,7 @@ def admin_menu(is_owner: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="📊 Statistika", callback_data="adm:stats"))
     kb.row(InlineKeyboardButton(text="🔗 Akkaunt ulash", callback_data="adm:account"))
-    kb.row(InlineKeyboardButton(text="🎁 Promokod yaratish", callback_data="adm:promo"))
+    kb.row(InlineKeyboardButton(text="🎁 Promokodlar", callback_data="adm:promolist"))
     kb.row(InlineKeyboardButton(text="💰 Balans qo'shish", callback_data="adm:addbal"))
     kb.row(InlineKeyboardButton(text="📢 Xabar yuborish", callback_data="adm:broadcast"))
     kb.row(InlineKeyboardButton(text="🌟 Stars ishlash (zadaniya)", callback_data="adm:tasks"))
@@ -146,6 +146,42 @@ def admin_menu(is_owner: bool = False) -> InlineKeyboardMarkup:
     kb.row(InlineKeyboardButton(text="👮 Adminlar", callback_data="adm:admins"))
     if is_owner:
         kb.row(InlineKeyboardButton(text="👑 Egalikni o'tkazish", callback_data="adm:transfer"))
+    return kb.as_markup()
+
+
+def promo_created_kb(promo_id: int) -> InlineKeyboardMarkup:
+    """Promokod yaratilgach — kanalga post qilish tugmasi."""
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="📢 Kanalga post qilish", callback_data=f"promopost:{promo_id}"))
+    kb.row(InlineKeyboardButton(text="◀️ Promokodlar ro'yxati", callback_data="adm:promolist"))
+    return kb.as_markup()
+
+
+def promo_list_kb(promos: list) -> InlineKeyboardMarkup:
+    """Promokodlar ro'yxati — har biri tugma (tafsilot uchun)."""
+    kb = InlineKeyboardBuilder()
+    for p in promos:
+        unit = "⭐" if (getattr(p, "reward_type", "som") == "stars") else "so'm"
+        remaining = max(p.max_uses - p.used_count, 0)
+        active = "" if p.is_active else "🚫 "
+        kb.row(InlineKeyboardButton(
+            text=f"{active}{p.code} · {p.bonus_amount:,}{unit} · {remaining}/{p.max_uses}",
+            callback_data=f"promoview:{p.id}",
+        ))
+    kb.row(InlineKeyboardButton(text="➕ Yangi promokod", callback_data="adm:promo"))
+    kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:back"))
+    return kb.as_markup()
+
+
+def promo_view_kb(promo_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    """Bitta promokod tafsiloti — foydalanuvchilar, post, o'chirish."""
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="👥 Kim foydalangan", callback_data=f"promousers:{promo_id}"))
+    kb.row(InlineKeyboardButton(text="📢 Kanalga post qilish", callback_data=f"promopost:{promo_id}"))
+    toggle = "🚫 Deaktivatsiya" if is_active else "✅ Aktivatsiya"
+    kb.row(InlineKeyboardButton(text=toggle, callback_data=f"promotoggle:{promo_id}"))
+    kb.row(InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"promodel:{promo_id}"))
+    kb.row(InlineKeyboardButton(text="◀️ Ro'yxatga", callback_data="adm:promolist"))
     return kb.as_markup()
 
 

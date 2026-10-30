@@ -13,7 +13,7 @@ Avtomatik to'lov (Click / Payme / bonus balans), referal tizimi, promokod va adm
 - ⭐ **Stars sotib olish** — @username + miqdor → to'lov → yetkazish
 - 💳 **Avtomatik to'lov** — Click, Payme, yoki ichki bonus balans
 - 👥 **Referal tizimi** — do'st taklif qilib, har buyurtmadan `%` bonus olish (firibgarlikdan himoyalangan: o'ziga referal bo'lmaydi)
-- 🎁 **Promokod** — admin yaratadi, foydalanuvchi bir marta ishlatadi
+- 🎁 **Promokod** — admin yaratadi (⭐ Stars yoki 💵 so'm), har akkaunt bir marta ishlatadi (atomik). Admin promokodlar ro'yxatini, kim foydalanganini ko'radi. Promokodни **kanalga post qilish** mumkin: admin matni + pastda avto «nechta qoldi» hisoblagich (foydalanuvchi kodni botga yozib oladi, hisoblagich har safar yangilanadi — Variant B)
 - 🚚 **Fragment integratsiyasi** — `manual` (admin qo'lda) yoki `ton` (avtomatik) rejim
 - 🛠 **Admin panel** — statistika, promokod yaratish, balans qo'shish, broadcast, yetkazishni tasdiqlash
 - 🚫 **Ban tizimi** — middleware orqali
@@ -87,7 +87,15 @@ Shu sababli **eski** `stars_bot.db` da `User` ning yangi ustunlari
    -- Avto karta to'lovi uchun topups jadvaliga qo'shilgan ustunlar:
    ALTER TABLE topups ADD COLUMN expected_amount INTEGER;
    ALTER TABLE topups ADD COLUMN expires_at DATETIME;
+   -- Promokod (Stars/so'm + kanal posti) uchun promocodes ustunlari:
+   ALTER TABLE promocodes ADD COLUMN reward_type VARCHAR(8) DEFAULT 'som';
+   ALTER TABLE promocodes ADD COLUMN channel_chat_id VARCHAR(64);
+   ALTER TABLE promocodes ADD COLUMN channel_message_id BIGINT;
+   ALTER TABLE promocodes ADD COLUMN channel_text VARCHAR(2048);
    ```
+   > ⚠️ `promo_uses` jadvaliga `(promo_id, user_id)` UNIQUE constraint qo'shildi.
+   > Bu `create_all` da faqat YANGI jadvalga tushadi. Mavjud `promo_uses`da bo'lsa:
+   > eski DB'ni o'chirish eng oson, yoki jadvalni qayta yaratish kerak.
    (Yangi jadvallar — `tasks`, `task_completions`, `withdrawals`, `required_channels` —
    `create_all` tomonidan avtomatik yaratiladi, qo'lda yaratish shart emas.)
 

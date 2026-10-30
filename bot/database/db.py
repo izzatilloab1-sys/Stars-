@@ -253,40 +253,143 @@ async def apply_referral_bonus(order_id: int, bonus_percent: int) -> tuple[int, 
 
 
 # ---------- Promocodes ----------
-async def create_promocode(code: str, bonus_amount: int, max_uses: int) -> Promocode:
+async def create_promocode(
+    code: str,
+    bonus_amount: int,
+    max_uses: int,
+    reward_type: str = "som",
+) -> Promocode:
     async with Session() as s:
-        promo = Promocode(code=code, bonus_amount=bonus_amount, max_uses=max_uses)
+        promo = Promocode(
+            code=code,
+            bonus_amount=bonus_amount,
+            max_uses=max_uses,
+            reward_type=reward_type if reward_type in ("som", "stars") else "som",
+        )
         s.add(promo)
         await s.commit()
         await s.refresh(promo)
         return promo
 
 
-async def redeem_promocode(user_id: int, code: str) -> tuple[bool, str, int]:
-    """Promokodni ishlatadi. Qaytaradi (ok, xabar, bonus)."""
+class RedeemResult:
+    """Promokod ishlatish natijasi (kanal postini yangilash uchun ma'lumot bilan)."""
+    def __init__(self, ok: bool, message: str, amount: int = 0,
+                 reward_type: str = "som", promo: Promocode | None = None):
+        self.ok = ok
+        self.message = message
+        self.amount = amount
+        self.reward_type = reward_type
+        self.promo = promo  # muvaffaqiyatli bo'lsa — yangilangan promokod (post uchun)
+
+
+async def redeem_promocode(user_id: int, code: str) -> RedeemResult:
+    """Promokodni ATOMIK ishlatadi (Stars yoki so'm). 1 akkaunt = 1 marta.
+
+    Qaytaradi: RedeemResult (ok, xabar, miqdor, tur, promo). promo — kanal postini
+    yangilash uchun (channel_chat_id/message_id, used_count, max_uses, channel_text)."""
+    code = code.strip()
     async with Session() as s:
-        res = await s.execute(select(Promocode).where(Promocode.code == code))
+        res = await s.execute(select(Promocode).where(func.lower(Promocode.code) == code.lower()))
         promo = res.scalar_one_or_none()
         if not promo or not promo.is_active:
-            return False, "Bunday promokod topilmadi yoki faol emas.", 0
+            return RedeemResult(False, "Bunday promokod topilmadi yoki faol emas.")
         if promo.used_count >= promo.max_uses:
-            return False, "Promokod ishlatish limiti tugagan.", 0
-        # foydalanuvchi oldin ishlatganmi?
-        used = await s.execute(
-            select(PromoUse).where(
-                PromoUse.promo_id == promo.id, PromoUse.user_id == user_id
+            return RedeemResult(False, "Afsuski, promokod limiti tugagan.")
+
+        rtype = promo.reward_type or "som"
+
+        # ATOMIK: PromoUse insert + flush. IntegrityError (UNIQUE) -> allaqachon ishlatgan.
+        s.add(PromoUse(promo_id=promo.id, user_id=user_id))
+        try:
+            await s.flush()
+        except IntegrityError:
+            await s.rollback()
+            return RedeemResult(False, "Siz bu promokodni allaqachon ishlatgansiz.")
+
+        # Limitni atomik oshiramiz (faqat limit tugamagan bo'lsa)
+        upd = await s.execute(
+            update(Promocode)
+            .where(Promocode.id == promo.id, Promocode.used_count < Promocode.max_uses)
+            .values(used_count=Promocode.used_count + 1)
+        )
+        if upd.rowcount == 0:
+            # Boshqa so'rov ayni paytda limitni to'ldirib qo'ydi
+            await s.rollback()
+            return RedeemResult(False, "Afsuski, promokod limiti tugagan.")
+
+        # Balansga qo'shamiz (turiga qarab)
+        if rtype == "stars":
+            await s.execute(
+                update(User).where(User.id == user_id)
+                .values(stars_balance=User.stars_balance + promo.bonus_amount)
+            )
+            msg = f"✅ Promokod qabul qilindi! +{promo.bonus_amount:,} ⭐ bonus."
+        else:
+            await s.execute(
+                update(User).where(User.id == user_id)
+                .values(balance=User.balance + promo.bonus_amount)
+            )
+            msg = f"✅ Promokod qabul qilindi! +{promo.bonus_amount:,} so'm bonus."
+
+        await s.commit()
+        await s.refresh(promo)
+        return RedeemResult(True, msg, promo.bonus_amount, rtype, promo)
+
+
+# ---------- Promokod — admin ro'yxat/boshqaruv ----------
+async def list_promocodes(limit: int = 50) -> list[Promocode]:
+    async with Session() as s:
+        res = await s.execute(select(Promocode).order_by(Promocode.id.desc()).limit(limit))
+        return list(res.scalars().all())
+
+
+async def get_promocode(promo_id: int) -> Promocode | None:
+    async with Session() as s:
+        return await s.get(Promocode, promo_id)
+
+
+async def set_promocode_channel(promo_id: int, chat_id: str, message_id: int, text: str) -> None:
+    async with Session() as s:
+        await s.execute(
+            update(Promocode).where(Promocode.id == promo_id).values(
+                channel_chat_id=chat_id, channel_message_id=message_id, channel_text=text
             )
         )
-        if used.scalar_one_or_none():
-            return False, "Siz bu promokodni allaqachon ishlatgansiz.", 0
+        await s.commit()
 
-        promo.used_count += 1
-        s.add(PromoUse(promo_id=promo.id, user_id=user_id))
+
+async def set_promocode_active(promo_id: int, active: bool) -> None:
+    async with Session() as s:
         await s.execute(
-            update(User).where(User.id == user_id).values(balance=User.balance + promo.bonus_amount)
+            update(Promocode).where(Promocode.id == promo_id).values(is_active=active)
         )
         await s.commit()
-        return True, f"Promokod qabul qilindi! +{promo.bonus_amount:,} so'm bonus.", promo.bonus_amount
+
+
+async def delete_promocode(promo_id: int) -> None:
+    async with Session() as s:
+        await s.execute(PromoUse.__table__.delete().where(PromoUse.promo_id == promo_id))
+        promo = await s.get(Promocode, promo_id)
+        if promo:
+            await s.delete(promo)
+        await s.commit()
+
+
+async def get_promo_users(promo_id: int, limit: int = 100) -> list[dict]:
+    """Promokodni ishlatgan foydalanuvchilar: user_id + username + ism."""
+    async with Session() as s:
+        res = await s.execute(
+            select(User.id, User.username, User.full_name)
+            .join(PromoUse, PromoUse.user_id == User.id)
+            .where(PromoUse.promo_id == promo_id)
+            .order_by(PromoUse.id.desc())
+            .limit(limit)
+        )
+        return [
+            {"id": row[0], "username": row[1], "full_name": row[2]}
+            for row in res.all()
+        ]
 
 
 # ---------- Topup (balans to'ldirish) ----------

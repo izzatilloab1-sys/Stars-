@@ -423,9 +423,17 @@ async def promo_start(message: Message, state: FSMContext):
 @router.message(PromoState.code)
 async def promo_redeem(message: Message, state: FSMContext):
     code = message.text.strip()
-    ok, msg, _ = await db.redeem_promocode(message.from_user.id, code)
+    result = await db.redeem_promocode(message.from_user.id, code)
     await state.clear()
-    await message.answer(("✅ " if ok else "❌ ") + msg, reply_markup=main_menu())
+    is_adm = await _is_admin(message.from_user.id)
+    await message.answer(
+        result.message if result.ok else ("❌ " + result.message),
+        reply_markup=main_menu(is_adm),
+    )
+    # Muvaffaqiyatli bo'lsa va promokod kanal postiga bog'langan bo'lsa — hisoblagichni yangilaymiz
+    if result.ok and result.promo and result.promo.channel_message_id:
+        from bot.services.promo_channel import update_channel_post
+        await update_channel_post(message.bot, result.promo)
 
 
 @router.callback_query(F.data == "cancel")

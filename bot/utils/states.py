@@ -15,8 +15,11 @@ class PromoState(StatesGroup):
 class AdminState(StatesGroup):
     broadcast = State()
     promo_code = State()
+    promo_type = State()       # Stars yoki so'm
     promo_bonus = State()
     promo_uses = State()
+    promo_channel_chat = State()   # kanalga post: kanal id/username
+    promo_channel_text = State()   # kanalga post: admin matni
     add_balance_user = State()
     add_balance_amount = State()
     # Akkaunt ulash

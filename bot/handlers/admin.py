@@ -82,18 +82,35 @@ async def adm_promo_code(message: Message, state: FSMContext):
     if not await is_admin(message.from_user.id):
         return
     await state.update_data(code=message.text.strip())
+    await state.set_state(AdminState.promo_type)
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⭐ Stars", callback_data="promotype:stars"))
+    kb.row(InlineKeyboardButton(text="💵 So'm", callback_data="promotype:som"))
+    await message.answer("🎁 Mukofot turini tanlang:", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("promotype:"), AdminState.promo_type)
+async def adm_promo_type(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    rtype = call.data.split(":")[1]  # "stars" | "som"
+    await state.update_data(reward_type=rtype)
     await state.set_state(AdminState.promo_bonus)
-    await message.answer("💰 Bonus miqdorini kiriting (so'mda):")
+    unit = "⭐ Stars" if rtype == "stars" else "so'm"
+    await call.message.answer(f"💰 Bonus miqdorini kiriting ({unit}):")
+    await call.answer()
 
 
 @router.message(AdminState.promo_bonus)
 async def adm_promo_bonus(message: Message, state: FSMContext):
-    if not message.text.strip().isdigit():
+    if not message.text.strip().replace(" ", "").isdigit():
         await message.answer("❌ Son kiriting:")
         return
-    await state.update_data(bonus=int(message.text.strip()))
+    await state.update_data(bonus=int(message.text.strip().replace(" ", "")))
     await state.set_state(AdminState.promo_uses)
-    await message.answer("🔢 Nechta marta ishlatilsin? (son):")
+    await message.answer("🔢 Nechta marta ishlatilsin? (limit, son):")
 
 
 @router.message(AdminState.promo_uses)
@@ -102,20 +119,190 @@ async def adm_promo_uses(message: Message, state: FSMContext):
         await message.answer("❌ Son kiriting:")
         return
     data = await state.get_data()
+    rtype = data.get("reward_type", "som")
     try:
         promo = await db.create_promocode(
-            code=data["code"], bonus_amount=data["bonus"], max_uses=int(message.text.strip())
+            code=data["code"], bonus_amount=data["bonus"],
+            max_uses=int(message.text.strip()), reward_type=rtype,
         )
     except Exception as e:  # noqa: BLE001
         await state.clear()
         await message.answer(f"❌ Xatolik (ehtimol bunday kod bor): {e}")
         return
     await state.clear()
+    unit = "⭐ Stars" if rtype == "stars" else "so'm"
+    from bot.keyboards.kb import promo_created_kb
     await message.answer(
         f"✅ Promokod yaratildi!\n\n"
         f"🎁 Kod: <code>{promo.code}</code>\n"
-        f"💰 Bonus: {promo.bonus_amount:,} so'm\n"
-        f"🔢 Limit: {promo.max_uses} marta",
+        f"💰 Bonus: {promo.bonus_amount:,} {unit}\n"
+        f"🔢 Limit: {promo.max_uses} marta\n\n"
+        f"Istasangiz, bu promokodni kanalga post qilishingiz mumkin 👇",
+        reply_markup=promo_created_kb(promo.id),
+    )
+
+
+# ---------- Promokodlar ro'yxati / boshqaruvi ----------
+def _promo_unit(p) -> str:
+    return "⭐ Stars" if (getattr(p, "reward_type", "som") == "stars") else "so'm"
+
+
+@router.callback_query(F.data == "adm:promolist")
+async def adm_promolist(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    await state.clear()
+    from bot.keyboards.kb import promo_list_kb
+    promos = await db.list_promocodes()
+    if not promos:
+        text = "🎁 <b>Promokodlar</b>\n\nHali promokod yo'q. Yangi yarating 👇"
+    else:
+        text = (
+            "🎁 <b>Promokodlar ro'yxati</b>\n\n"
+            "Har bir qator: kod · miqdor · qolgan/limit\n"
+            "🚫 — deaktivatsiya qilingan. Tafsilot uchun bosing 👇"
+        )
+    try:
+        await call.message.edit_text(text, reply_markup=promo_list_kb(promos))
+    except Exception:  # noqa: BLE001
+        await call.message.answer(text, reply_markup=promo_list_kb(promos))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("promoview:"))
+async def adm_promo_view(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        return
+    promo_id = int(call.data.split(":")[1])
+    promo = await db.get_promocode(promo_id)
+    if not promo:
+        await call.answer("Topilmadi.", show_alert=True)
+        return
+    from bot.keyboards.kb import promo_view_kb
+    remaining = max(promo.max_uses - promo.used_count, 0)
+    posted = "✅ ha" if promo.channel_message_id else "❌ yo'q"
+    await call.message.edit_text(
+        f"🎁 <b>Promokod: {promo.code}</b>\n\n"
+        f"💰 Mukofot: <b>{promo.bonus_amount:,} {_promo_unit(promo)}</b>\n"
+        f"🔢 Limit: <b>{promo.max_uses}</b>\n"
+        f"✅ Ishlatilgan: <b>{promo.used_count}</b>\n"
+        f"📊 Qolgan: <b>{remaining}</b>\n"
+        f"⚙️ Holati: <b>{'faol' if promo.is_active else 'faol emas'}</b>\n"
+        f"📢 Kanalga post: <b>{posted}</b>",
+        reply_markup=promo_view_kb(promo.id, promo.is_active),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("promousers:"))
+async def adm_promo_users(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        return
+    promo_id = int(call.data.split(":")[1])
+    users = await db.get_promo_users(promo_id)
+    if not users:
+        await call.answer("Hali hech kim ishlatmagan.", show_alert=True)
+        return
+    lines = [f"👥 <b>Foydalanganlar ({len(users)} ta):</b>\n"]
+    for u in users:
+        uname = f"@{u['username']}" if u["username"] else (u["full_name"] or "—")
+        lines.append(f"• <code>{u['id']}</code> — {uname}")
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3990] + "\n…"
+    await call.message.answer(text)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("promotoggle:"))
+async def adm_promo_toggle(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        return
+    promo_id = int(call.data.split(":")[1])
+    promo = await db.get_promocode(promo_id)
+    if not promo:
+        await call.answer("Topilmadi.", show_alert=True)
+        return
+    await db.set_promocode_active(promo_id, not promo.is_active)
+    await adm_promo_view(call)
+
+
+@router.callback_query(F.data.startswith("promodel:"))
+async def adm_promo_del(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        return
+    promo_id = int(call.data.split(":")[1])
+    await db.delete_promocode(promo_id)
+    await call.answer("🗑 O'chirildi.")
+    # ro'yxatga qaytamiz
+    from bot.keyboards.kb import promo_list_kb
+    promos = await db.list_promocodes()
+    text = "🎁 <b>Promokodlar ro'yxati</b>\n\nTafsilot uchun bosing 👇" if promos \
+        else "🎁 <b>Promokodlar</b>\n\nHali promokod yo'q."
+    try:
+        await call.message.edit_text(text, reply_markup=promo_list_kb(promos))
+    except Exception:  # noqa: BLE001
+        await call.message.answer(text, reply_markup=promo_list_kb(promos))
+
+
+# ---------- Kanalga post qilish ----------
+@router.callback_query(F.data.startswith("promopost:"))
+async def adm_promo_post_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    promo_id = int(call.data.split(":")[1])
+    await state.update_data(promo_id=promo_id)
+    await state.set_state(AdminState.promo_channel_chat)
+    await call.message.answer(
+        "📢 <b>Kanalga post qilish</b>\n\n"
+        "Kanal ID yoki @username ni kiriting (bot o'sha kanalда admin bo'lishi shart).\n"
+        "Masalan: <code>@mychannel</code> yoki <code>-1001234567890</code>"
+    )
+    await call.answer()
+
+
+@router.message(AdminState.promo_channel_chat)
+async def adm_promo_post_chat(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    await state.update_data(channel_chat=message.text.strip())
+    await state.set_state(AdminState.promo_channel_text)
+    await message.answer(
+        "✍️ Endi post MATNINI yuboring (o'zingiz xohlagan matn).\n\n"
+        "Pastiga promokod va «nechta qolgani» hisoblagichi avtomatik qo'shiladi."
+    )
+
+
+@router.message(AdminState.promo_channel_text)
+async def adm_promo_post_text(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    promo_id = data["promo_id"]
+    chat_id = data["channel_chat"]
+    text = message.text or ""
+    await state.clear()
+
+    promo = await db.get_promocode(promo_id)
+    if not promo:
+        await message.answer("❌ Promokod topilmadi.")
+        return
+
+    from bot.services.promo_channel import send_channel_post
+    msg_id, err = await send_channel_post(
+        message.bot, chat_id, text, promo.code, promo.used_count, promo.max_uses
+    )
+    if msg_id is None:
+        await message.answer(
+            f"❌ Kanalga post yuborib bo'lmadi: {err}\n\n"
+            f"Tekshiring: bot kanalда admin bo'lsin va kanal ID/username to'g'ri bo'lsin."
+        )
+        return
+    await db.set_promocode_channel(promo_id, chat_id, msg_id, text)
+    await message.answer(
+        f"✅ Post kanalga joylandi!\n\n"
+        f"Har kim kodни botga yuborganда, kanaldagi «nechta qoldi» hisoblagichi "
+        f"avtomatik yangilanadi."
     )
 
 

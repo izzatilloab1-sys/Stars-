@@ -88,15 +88,25 @@ class Promocode(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     code: Mapped[str] = mapped_column(String(64), unique=True)
-    bonus_amount: Mapped[int] = mapped_column(Integer)  # beriladigan bonus (so'm)
+    bonus_amount: Mapped[int] = mapped_column(Integer)  # beriladigan miqdor (so'm YOKI Stars)
+    # Mukofot turi: 'som' yoki 'stars'. Eski promokodlarda null -> 'som' (orqaga moslik).
+    reward_type: Mapped[str] = mapped_column(String(8), default="som")
     max_uses: Mapped[int] = mapped_column(Integer, default=1)
     used_count: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(default=True)
+    # Kanal posti (Variant B) — bot tashlagan post, hisoblagich shu yerda yangilanadi
+    channel_chat_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    channel_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    channel_text: Mapped[str | None] = mapped_column(String(2048), nullable=True)  # admin matni
 
 
 class PromoUse(Base):
-    """Har bir foydalanuvchi promokodni bir marta ishlatishi uchun."""
+    """Har bir foydalanuvchi promokodni bir marta ishlatishi uchun.
+    (promo_id, user_id) UNIQUE — poyga sharoitida ikki marta ishlatishning oldini oladi."""
     __tablename__ = "promo_uses"
+    __table_args__ = (
+        UniqueConstraint("promo_id", "user_id", name="uq_promo_use_promo_user"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     promo_id: Mapped[int] = mapped_column(Integer, ForeignKey("promocodes.id"))
