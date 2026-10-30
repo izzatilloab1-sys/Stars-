@@ -169,8 +169,17 @@ yuboradi va **«✅ Yetkazdim»** bosadi.
    (hamyonda USDT balansi bo'lishi kerak).
 4. Fragment Stars'ni username'ga yetkazadi.
 
-**Kerak bo'ladigan Fragment kutubxonasi** (biri):
+> 🔒 **Yuboruvchi maxfiy:** bot `show_sender=False` bilan yuboradi — qabul qiluvchiga
+> sizning profilingiz (kim yuborgani) ko'rinmaydi.
+
+**Kerak bo'ladigan Fragment kutubxonasi:**
 ```bash
+pip install fragment-api-lib    # asosiy (fragment_api_lib.client.FragmentAPIClient)
+```
+_(zaxira moslik: fragment-api / fragment-api-py / pyfragment ham qo'llab-quvvatlanadi)_
+
+```bash
+# eski eslatma:
 pip install fragment-api      # yoki
 pip install pyfragment
 ```

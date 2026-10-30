@@ -9,9 +9,9 @@ tonutils==0.1.0
 telethon==1.36.0
 
 # === AVTOMATIK Stars yetkazish uchun (pullik buyurtmalar) ===
-# Quyidagilardan BIRINI o'rnating (fragment.py adapteri ikkalasiga mos):
-#   pip install fragment-api-lib     # NightStrang6r — KYC'siz rejim (faqat faol TON hamyon, cookie shart emas)
-#   pip install fragment-api-py      # S1qwy
-#   pip install pyfragment           # bohd4nx (async)
-# Avtomatik yetkazish ISHLASHI uchun: kutubxona o'rnatilgan + hamyon seed ulangan
-# + FRAGMENT_MODE=fragment. (KYC'siz rejimda cookie shart emas, faqat faol TON hamyon.)
+fragment-api-lib==1.1.0
+# fragment.py adapteri fragment_api_lib.client.FragmentAPIClient ga moslangan:
+#   - KYC'siz rejim: buy_stars_without_kyc(username, amount, seed, payment_method)  -> faqat faol TON hamyon
+#   - KYC rejim:     buy_stars(username, amount, fragment_cookies, seed, show_sender=False, payment_method)
+# Avtomatik yetkazish ISHLASHI uchun: kutubxona + hamyon seed ulangan + FRAGMENT_MODE=fragment.
+# (show_sender=False -> yuboruvchi profilingiz qabul qiluvchiga ko'rinmaydi.)

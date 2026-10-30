@@ -94,7 +94,16 @@ async def _deliver_via_fragment(username: str, stars: int) -> DeliveryResult:
     if not seed:
         return DeliveryResult(ok=False, message="Hamyon seed sozlanmagan (admin panel yoki .env).")
 
-    # --- Adapter 1: fragment-api (S1qwy/fragment-api-py oilasidagi sinxron klient) ---
+    # --- Adapter 1: fragment-api-lib (NightStrang6r) — aniq, asosiy ---
+    try:
+        return await _try_fragment_api_lib(username, stars, seed, cookies)
+    except ImportError:
+        logger.info("fragment-api-lib topilmadi, keyingi adapterni sinayman.")
+    except Exception as e:  # noqa: BLE001
+        logger.exception("fragment-api-lib orqali xatolik")
+        return DeliveryResult(ok=False, message=f"Fragment xatolik: {e}")
+
+    # --- Adapter 2 (zaxira): fragment-api / fragment-api-py (S1qwy oilasi) ---
     try:
         return await _try_fragment_api(username, stars, seed, cookies)
     except ImportError:
@@ -103,7 +112,7 @@ async def _deliver_via_fragment(username: str, stars: int) -> DeliveryResult:
         logger.exception("fragment-api orqali xatolik")
         return DeliveryResult(ok=False, message=f"Fragment xatolik: {e}")
 
-    # --- Adapter 2: pyfragment (bohd4nx) ---
+    # --- Adapter 3 (zaxira): pyfragment (bohd4nx) ---
     try:
         return await _try_pyfragment(username, stars, seed, cookies)
     except ImportError:
@@ -116,9 +125,94 @@ async def _deliver_via_fragment(username: str, stars: int) -> DeliveryResult:
         ok=False,
         message=(
             "Fragment kutubxonasi o'rnatilmagan. "
-            "`pip install fragment-api` yoki `pip install pyfragment` qiling."
+            "`pip install fragment-api-lib` qiling."
         ),
     )
+
+
+async def _try_fragment_api_lib(username: str, stars: int, seed: str, cookies: dict) -> DeliveryResult:
+    """fragment-api-lib (NightStrang6r) — ANIQ interfeys.
+
+        from fragment_api_lib.client import FragmentAPIClient
+        client = FragmentAPIClient()
+        # KYC'siz (faqat seed, cookie shart emas):
+        client.buy_stars_without_kyc(username, amount, seed=..., payment_method="ton")
+        # KYC bilan (cookie + seed):
+        client.buy_stars(username, amount, fragment_cookies=..., seed=..., show_sender=False)
+
+    show_sender=False -> yuboruvchi (sizning profil) ko'rinmaydi.
+    """
+    def _run() -> DeliveryResult:
+        from fragment_api_lib.client import FragmentAPIClient  # type: ignore
+
+        client = FragmentAPIClient()
+        pay = settings.fragment_pay_currency.lower()  # "ton" | "usdt"
+        uname = username if username.startswith("@") else f"@{username}"
+        has_cookie = bool(cookies.get("stel_token"))
+
+        if has_cookie:
+            # KYC rejim: cookie Header String ko'rinishida kerak
+            cookie_str = _cookies_to_header(cookies)
+            res = client.buy_stars(
+                username=uname,
+                amount=stars,
+                fragment_cookies=cookie_str,
+                seed=seed,
+                show_sender=False,          # yuboruvchi (profil) ko'rinmasin
+                payment_method=pay,
+            )
+        else:
+            # KYC'siz rejim: faqat faol TON hamyon (seed)
+            res = client.buy_stars_without_kyc(
+                username=uname,
+                amount=stars,
+                seed=seed,
+                payment_method=pay,
+            )
+
+        # Natijani talqin qilamiz (dict/obyekt)
+        ok, tx, err = _interpret_result(res)
+        msg = "Fragment orqali yuborildi" if ok else f"Fragment rad etdi: {err or 'noma''lum sabab'}"
+        return DeliveryResult(ok=ok, message=msg, tx_id=tx)
+
+    return await asyncio.to_thread(_run)
+
+
+def _cookies_to_header(cookies: dict) -> str:
+    """Cookie dict'ni 'k=v; k=v' Header String ko'rinishiga keltiradi."""
+    parts = []
+    for k in ("stel_ssid", "stel_dt", "stel_token", "stel_ton_token"):
+        v = cookies.get(k)
+        if v:
+            parts.append(f"{k}={v}")
+    return "; ".join(parts)
+
+
+def _interpret_result(res) -> tuple[bool, str | None, str | None]:
+    """Fragment javobini (dict yoki obyekt) -> (ok, tx_id, error)."""
+    if isinstance(res, dict):
+        # xato bormi?
+        err = res.get("error") or res.get("detail") or res.get("message")
+        status = str(res.get("status", "")).lower()
+        ok = bool(
+            res.get("ok", res.get("success", True))
+        ) and status not in ("failed", "error", "cancelled")
+        # agar aniq error maydoni bo'lsa va ok belgilanmagan bo'lsa
+        if err and "ok" not in res and "success" not in res and not status:
+            ok = False
+        tx = (
+            res.get("tx_hash") or res.get("hash") or res.get("transaction")
+            or res.get("order_uuid") or res.get("order_id") or res.get("id")
+        )
+        return ok, (str(tx) if tx else None), (str(err) if err else None)
+    # obyekt
+    ok = getattr(res, "ok", getattr(res, "success", True))
+    tx = (
+        getattr(res, "tx_hash", None) or getattr(res, "hash", None)
+        or getattr(res, "order_uuid", None) or getattr(res, "order_id", None)
+    )
+    err = getattr(res, "error", None) or getattr(res, "message", None)
+    return bool(ok), (str(tx) if tx else None), (str(err) if err else None)
 
 
 async def _try_fragment_api(username: str, stars: int, seed: str, cookies: dict) -> DeliveryResult:
@@ -287,7 +381,7 @@ async def get_wallet_balance() -> float | None:
 
 def _fragment_lib_installed() -> str | None:
     """O'rnatilgan Fragment kutubxonasi nomini qaytaradi (yoki None)."""
-    for name in ("fragment_api", "fragment_api_py", "pyfragment"):
+    for name in ("fragment_api_lib", "fragment_api", "fragment_api_py", "pyfragment"):
         try:
             __import__(name)
             return name
