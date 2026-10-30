@@ -1040,16 +1040,49 @@ async def acc_seed_save(message: Message, state: FSMContext):
 async def acc_cookie_start(call: CallbackQuery, state: FSMContext):
     if not await is_admin(call.from_user.id):
         return
-    await state.set_state(AdminState.set_cookie_token)
+    await state.set_state(AdminState.set_cookie_full)
     await call.message.answer(
-        "🍪 <b>Fragment cookie'larini kiritamiz (4 qadam).</b>\n\n"
-        "Qanday olish:\n"
-        "1️⃣ Brauzerda fragment.com ga kiring, Telegram orqali login qiling\n"
-        "2️⃣ TON hamyoningizni ulang (Connect TON)\n"
-        "3️⃣ F12 → Application → Cookies → fragment.com\n\n"
-        "Endi <b>stel_token</b> qiymatini yuboring:"
+        "🍪 <b>Fragment cookie (Header String) — TAVSIYA ETILGAN usul</b>\n\n"
+        "Fragment buyurtma yaratish uchun TO'LIQ cookie satrini talab qiladi "
+        "(faqat 4 ta qiymat yetarli emas). Eng oson va ishonchli yo'l:\n\n"
+        "1️⃣ Brauzerga <b>Cookie-Editor</b> extension o'rnating\n"
+        "2️⃣ fragment.com ga Telegram orqali login qiling + TON hamyon ulang\n"
+        "3️⃣ Cookie-Editor'ni oching → <b>Export</b> → <b>Export as Header String</b>\n"
+        "4️⃣ Nusxalangan BUTUN satrni shu yerga yuboring\n\n"
+        "Satr <code>stel_ssid=...; stel_dt=...; stel_token=...; ...</code> "
+        "ko'rinishida bo'ladi (bir nechta qiymat ';' bilan ajratilgan).\n\n"
+        "👇 To'liq cookie satrini yuboring:"
     )
     await call.answer()
+
+
+@router.message(AdminState.set_cookie_full)
+async def acc_cookie_full(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    # oddiy validatsiya: kamida bitta 'stel_' kalit bo'lsin
+    if "stel_" not in raw or "=" not in raw:
+        await message.answer(
+            "❌ Bu cookie satriga o'xshamaydi. <code>stel_...=...</code> ko'rinishida "
+            "bo'lishi kerak. Qayta yuboring (yoki /admin bosib bekor qiling):"
+        )
+        return
+    await db.set_setting("fragment_full_cookie", raw)
+    # alohida maydonlarni ham satrdан ajratib saqlaymiz (diagnostika/moslik uchun)
+    for key in ("stel_token", "stel_ssid", "stel_dt", "stel_ton_token"):
+        import re as _re
+        m = _re.search(rf"{key}=([^;]+)", raw)
+        if m:
+            await db.set_setting(f"fragment_{key}", m.group(1).strip())
+    await state.clear()
+    try:
+        await message.delete()  # maxfiylik: cookie yuborilgan xabarni o'chiramiz
+    except Exception:  # noqa: BLE001
+        pass
+    await message.answer("✅ To'liq Fragment cookie saqlandi! (xabar o'chirildi)")
+    status = await fragment_service.get_account_status()
+    await message.answer(await _account_text(status), reply_markup=account_menu(status))
 
 
 @router.message(AdminState.set_cookie_token)
@@ -1175,7 +1208,7 @@ async def acc_clear(call: CallbackQuery):
         return
     for key in (
         "ton_wallet_mnemonic", "fragment_stel_token", "fragment_stel_ssid",
-        "fragment_stel_dt", "fragment_stel_ton_token",
+        "fragment_stel_dt", "fragment_stel_ton_token", "fragment_full_cookie",
     ):
         await db.set_setting(key, "")
     await db.set_setting("fragment_mode", "manual")

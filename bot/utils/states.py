@@ -25,6 +25,7 @@ class AdminState(StatesGroup):
     set_cookie_ssid = State()
     set_cookie_dt = State()
     set_cookie_ton = State()
+    set_cookie_full = State()  # to'liq Header String (Cookie Editor'dan)
     # Telegram akkaunt (telefon raqam orqali)
     tg_api_id = State()
     tg_api_hash = State()

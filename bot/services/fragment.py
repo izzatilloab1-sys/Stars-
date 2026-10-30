@@ -66,6 +66,8 @@ async def _fragment_cookies() -> dict:
         "stel_ssid": await _cfg("fragment_stel_ssid", settings.fragment_stel_ssid),
         "stel_dt": await _cfg("fragment_stel_dt", settings.fragment_stel_dt),
         "stel_ton_token": await _cfg("fragment_stel_ton_token", settings.fragment_stel_ton_token),
+        # To'liq cookie Header String (Cookie Editor'dan) — eng ishonchli variant
+        "full_cookie": await _cfg("fragment_full_cookie", ""),
     }
 
 
@@ -160,16 +162,18 @@ async def _try_fragment_api_lib(
         # Recipient search @ belgisisiz username kutadi -> @ ni OLIB TASHLAYMIZ
         uname = username.lstrip("@")
 
-        # --- FAQAT KYC'siz yo'l (cookie UMUMAN ishlatilmaydi) ---
-        # fragment-api-lib 1.1.0+ (API v3) KYC'siz rejimda FAQAT seed bilan ishlaydi.
-        # To'lov to'g'ridan-to'g'ri ulangan TON hamyondan (W5) yechiladi.
-        # Cookie yo'li BUTUNLAY olib tashlangan: "invalid fragment_cookies" xatosi
-        # endi chiqmaydi va buy_stars_without_kyc ning ASL xatosi ko'rinadi.
+        # --- KYC'siz yo'l (to'lov W5 hamyondan, Stars yuboriladi) ---
+        # fragment-api-lib buy_stars_without_kyc KYC talab qilmasa ham, RECIPIENT
+        # qidirish uchun fragment_cookies talab qiladi. Shuning uchun cookie'ni
+        # (Header String) UZATAMIZ. To'lov baribir hamyondan (seed) yechiladi,
+        # KYC verifikatsiya kerak emas.
+        cookie_str = _cookie_header(cookies)
         try:
             res = _call_flexible(
                 client.buy_stars_without_kyc,
                 username=uname, amount=stars, seed=seed,
                 payment_method=pay, wallet_type=wtype,
+                fragment_cookies=cookie_str,
             )
         except Exception as e:  # noqa: BLE001
             return DeliveryResult(ok=False, message=f"Fragment (without_kyc) xatolik: {e}")
@@ -207,6 +211,20 @@ def _cookies_to_header(cookies: dict) -> str:
         if v:
             parts.append(f"{k}={v}")
     return "; ".join(parts)
+
+
+def _cookie_header(cookies: dict) -> str:
+    """Fragment uchun cookie Header String'ni qaytaradi.
+
+    Agar admin TO'LIQ cookie header'ni (Cookie Editor'dan) yopishtirgan bo'lsa,
+    o'shani ishlatamiz (eng ishonchli). Aks holda 4 ta alohida maydondan
+    'k=v; k=v' satr tuzamiz.
+
+    To'liq header 'full_cookie' kalitida saqlanadi (admin panel orqali)."""
+    full = (cookies.get("full_cookie") or "").strip()
+    if full:
+        return full
+    return _cookies_to_header(cookies)
 
 
 def _interpret_result(res) -> tuple[bool, str | None, str | None]:
@@ -347,7 +365,7 @@ async def get_account_status() -> dict:
         "mode": mode,
         "seed_set": bool(seed),
         "seed_words": seed_words,
-        "cookie_set": bool(cookies.get("stel_token")),
+        "cookie_set": bool(cookies.get("stel_token") or cookies.get("full_cookie")),
         "wallet_version": wallet_version,
         "wallet_address": await get_wallet_address(seed, wallet_version) if seed else None,
         "tg_set": bool(tg_session),
