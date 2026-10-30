@@ -25,6 +25,33 @@ TONCENTER_V3 = "https://toncenter.com/api/v3"
 COINGECKO = "https://api.coingecko.com/api/v3/simple/price"
 
 
+async def get_receive_address() -> str:
+    """To'lovlar keladigan TON manzilini qaytaradi.
+
+    Tartib:
+      1. Admin panelda alohida o'rnatilgan manzil (DB 'ton_wallet_address')
+      2. .env dagi TON_WALLET_ADDRESS
+      3. Ulangan hamyon seed'idan hisoblangan manzil (eng qulay — alohida
+         sozlash shart emas, seed ulangan bo'lsa yetarli)
+    Topilmasa bo'sh satr."""
+    from bot.database import db
+
+    # 1 & 2: DB sozlama -> .env
+    addr = await db.get_setting("ton_wallet_address", settings.ton_wallet_address)
+    if addr:
+        return addr
+
+    # 3: ulangan seed'dan hisoblaymiz (hamyon versiyasini hisobga olib)
+    try:
+        from bot.services.fragment import get_wallet_address
+        seed_addr = await get_wallet_address()
+        if seed_addr:
+            return seed_addr
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Seed'dan manzil olishda xatolik: %s", e)
+    return ""
+
+
 async def get_ton_uzs_rate() -> float:
     """1 TON necha so'm turishini qaytaradi.
 
@@ -73,8 +100,9 @@ async def check_ton_payment(comment: str, min_nano: int) -> str | None:
 
     Qaytaradi: tranzaksiya hash (topilsa) yoki None.
     """
-    if not settings.ton_wallet_address:
-        logger.error("TON_WALLET_ADDRESS sozlanmagan.")
+    address = await get_receive_address()
+    if not address:
+        logger.error("TON qabul qilish manzili aniqlanmadi (seed/.env/admin yo'q).")
         return None
 
     headers = {}
@@ -82,7 +110,7 @@ async def check_ton_payment(comment: str, min_nano: int) -> str | None:
         headers["X-API-Key"] = settings.ton_api_key
 
     params = {
-        "account": settings.ton_wallet_address,
+        "account": address,
         "limit": 30,
         "offset": 0,
         "sort": "desc",

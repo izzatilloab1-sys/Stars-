@@ -81,15 +81,17 @@ async def choose_payment(call: CallbackQuery, state: FSMContext):
 
 async def _start_ton_payment(call: CallbackQuery, order):
     """TON to'lov ko'rsatmalarini chiqaradi: manzil + aniq summa + comment."""
-    if not settings.ton_wallet_address:
-        await call.answer("TON to'lovi hozircha sozlanmagan. Boshqa usulni tanlang.", show_alert=True)
+    addr = await ton_payment.get_receive_address()
+    if not addr:
+        await call.answer(
+            "TON to'lovi hozircha sozlanmagan (hamyon ulanmagan). Boshqa usulni tanlang.",
+            show_alert=True,
+        )
         return
 
     comment = f"SB{order.id}"  # unikal memo
     ton_amount = await ton_payment.uzs_to_ton(order.amount)
     await db.set_order_field(order.id, payment_method="ton", pay_comment=comment)
-
-    addr = settings.ton_wallet_address
     # ton:// deep-link (Tonkeeper va boshqa hamyonlar ochadi)
     nano = int(ton_amount * 1e9)
     ton_url = f"https://app.tonkeeper.com/transfer/{addr}?amount={nano}&text={comment}"

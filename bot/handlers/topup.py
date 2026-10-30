@@ -96,13 +96,17 @@ async def topup_pay(call: CallbackQuery, state: FSMContext):
     topup = await db.create_topup(call.from_user.id, amount, method)
 
     if method == "ton":
-        if not settings.ton_wallet_address:
-            await call.answer("TON to'lovi sozlanmagan.", show_alert=True)
+        addr = await ton_payment.get_receive_address()
+        if not addr:
+            await call.answer(
+                "TON to'lovi hozircha sozlanmagan (hamyon ulanmagan). "
+                "Boshqa usulni tanlang yoki adminga yozing.",
+                show_alert=True,
+            )
             return
         comment = f"TP{topup.id}"
         ton_amount = await ton_payment.uzs_to_ton(amount)
         await db.set_topup_field(topup.id, pay_comment=comment)
-        addr = settings.ton_wallet_address
         nano = int(ton_amount * 1e9)
         ton_url = f"https://app.tonkeeper.com/transfer/{addr}?amount={nano}&text={comment}"
         await call.message.edit_text(
