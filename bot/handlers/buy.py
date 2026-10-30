@@ -45,8 +45,10 @@ async def buy_target(message: Message, state: FSMContext):
     username = username.lstrip("@")
     await state.update_data(target=username)
     await state.set_state(BuyStars.amount)
+    price = await db.get_price_per_star()
     await message.answer(
         f"✅ Qabul qiluvchi: <b>@{username}</b>\n\n"
+        f"💰 Narx: <b>{price:,} so'm</b> / 1 ⭐\n\n"
         f"🎁 Tayyor hadya paketini tanlang yoki o'z miqdoringizni kiriting\n"
         f"(min {settings.min_stars:,}, max {settings.max_stars:,}):",
         reply_markup=star_packages_kb(),
@@ -58,8 +60,11 @@ async def buy_package(call: CallbackQuery, state: FSMContext):
     """Tayyor paket (15/25/50 ...) tanlandi yoki 'boshqa miqdor'."""
     part = call.data.split(":")[1]
     if part == "custom":
+        price = await db.get_price_per_star()
         await call.message.answer(
-            f"✏️ Nechta Stars? (min {settings.min_stars:,}, max {settings.max_stars:,}):",
+            f"✏️ Nechta Stars sotib olmoqchisiz?\n"
+            f"💰 Narx: <b>{price:,} so'm</b> / 1 ⭐\n\n"
+            f"Miqdorni kiriting (min {settings.min_stars:,}, max {settings.max_stars:,}):",
             reply_markup=cancel_kb(),
         )
         await call.answer()

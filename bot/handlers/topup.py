@@ -25,7 +25,7 @@ class TopupState(StatesGroup):
     custom_amount = State()
 
 
-MIN_TOPUP = 10_000  # minimal to'ldirish summasi (so'm)
+MIN_TOPUP = 1_000  # minimal to'ldirish summasi (so'm)
 
 
 @router.message(F.text == "💳 Balans to'ldirish")
