@@ -11,7 +11,7 @@ from aiogram.enums import ParseMode
 from bot.config import settings
 from bot.database import db
 from bot.handlers import admin, buy, payment, topup, user
-from bot.middlewares import BanMiddleware
+from bot.middlewares import BanMiddleware, MenuResetMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,7 +30,11 @@ async def main() -> None:
     )
     dp = Dispatcher()
 
-    # Middleware (banlanganlarni to'xtatadi)
+    # Middleware
+    # MenuResetMiddleware — outer: FSM handler filtri tekshirilishidan OLDIN ishlaydi,
+    # shunda menyu tugmasi bosilganda eski holat tozalanadi.
+    dp.message.outer_middleware(MenuResetMiddleware())
+    # BanMiddleware — banlanganlarni to'xtatadi
     dp.message.middleware(BanMiddleware())
     dp.callback_query.middleware(BanMiddleware())
 

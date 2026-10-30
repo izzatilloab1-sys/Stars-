@@ -7,6 +7,22 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
+# Asosiy menyu (reply-keyboard) tugmalarining barcha matnlari.
+# MenuResetMiddleware shu to'plamdan foydalanib, menyu tugmasi bosilganda
+# faol FSM holatini tozalaydi (bir oqim o'rtasida boshqa tugma ishlashi uchun).
+MENU_BUTTONS: set[str] = {
+    "⭐ Stars sotib olish",
+    "💳 Balans to'ldirish",
+    "👤 Profil",
+    "👥 Referal",
+    "📦 Buyurtmalarim",
+    "🌟 Stars ishlash",
+    "💸 Yechib olish",
+    "🎁 Promokod",
+    "ℹ️ Yordam",
+    "🛠 Admin panel",
+}
+
 
 def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardBuilder()
