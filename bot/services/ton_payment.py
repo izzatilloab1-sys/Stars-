@@ -115,6 +115,8 @@ async def check_ton_payment(comment: str, min_nano: int) -> str | None:
         "offset": 0,
         "sort": "desc",
     }
+    logger.info("TON tekshiruv: manzil=%s, kutilgan comment=%r, min_nano=%s",
+                address, comment, min_nano)
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -124,37 +126,50 @@ async def check_ton_payment(comment: str, min_nano: int) -> str | None:
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 if resp.status != 200:
-                    logger.warning("toncenter javobi: %s", resp.status)
+                    body = await resp.text()
+                    logger.warning("toncenter javobi: %s | %s", resp.status, body[:300])
                     return None
                 data = await resp.json()
     except Exception as e:  # noqa: BLE001
         logger.warning("toncenter so'rovida xatolik: %s", e)
         return None
 
-    for tx in data.get("transactions", []):
+    txs = data.get("transactions", [])
+    logger.info("TON tekshiruv: %s ta tranzaksiya topildi", len(txs))
+
+    for tx in txs:
         in_msg = tx.get("in_msg") or {}
         # faqat tashqaridan kelgan (incoming) to'lov: manba bo'lishi kerak
         if not in_msg.get("source"):
             continue
         value = int(in_msg.get("value") or 0)
-        # comment decoded_body yoki message_content.decoded ichida bo'ladi
         msg_comment = _extract_comment(in_msg)
-        if msg_comment == comment and value >= min_nano:
+        logger.info("  kelgan to'lov: comment=%r, value=%s nano", msg_comment, value)
+        # Comment mos (bo'sh joy/katta-kichik harf farqini e'tiborga olmaymiz)
+        comment_ok = msg_comment and msg_comment.strip().lower() == comment.strip().lower()
+        if comment_ok and value >= min_nano:
+            logger.info("  ✅ MOS KELDI -> tasdiqlanadi")
             return tx.get("hash")
+        elif comment_ok and value < min_nano:
+            logger.warning("  ⚠️ comment mos, lekin summa kam: %s < %s nano", value, min_nano)
     return None
 
 
 def _extract_comment(in_msg: dict) -> str | None:
-    """in_msg ichidan matnli comment'ni ajratib oladi (v3 formati)."""
-    # v3: message_content.decoded.comment
+    """in_msg ichidan matnli comment'ni ajratib oladi (toncenter v3 turli formatlar)."""
+    # 1) message_content.decoded.comment yoki .text
     mc = in_msg.get("message_content") or {}
-    decoded = mc.get("decoded") or {}
+    decoded = mc.get("decoded")
     if isinstance(decoded, dict):
-        comment = decoded.get("comment")
-        if comment:
-            return str(comment).strip()
-    # ba'zi javoblarda to'g'ridan-to'g'ri
-    comment = in_msg.get("comment")
-    if comment:
-        return str(comment).strip()
+        for key in ("comment", "text"):
+            val = decoded.get(key)
+            if val:
+                return str(val).strip()
+    if isinstance(decoded, str) and decoded.strip():
+        return decoded.strip()
+    # 2) to'g'ridan-to'g'ri comment/message maydoni
+    for key in ("comment", "message"):
+        val = in_msg.get(key)
+        if val:
+            return str(val).strip()
     return None
