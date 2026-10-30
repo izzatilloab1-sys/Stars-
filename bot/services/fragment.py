@@ -159,42 +159,24 @@ async def _try_fragment_api_lib(
         wtype = wallet_version                         # "v4r2" | "v5r1" (W5)
         # Recipient search @ belgisisiz username kutadi -> @ ni OLIB TASHLAYMIZ
         uname = username.lstrip("@")
-        has_cookie = bool(cookies.get("stel_token"))
 
-        # --- Asosiy yo'l: KYC'siz (faqat seed) ---
-        # fragment-api-lib 1.1.0+ (API v3) KYC'siz rejimda FAQAT seed bilan ishlaydi,
-        # cookie UMUMAN kerak emas. wallet_type orqali W5 (v5r1) hamyonni ko'rsatamiz.
-        err_without_kyc = None
+        # --- FAQAT KYC'siz yo'l (cookie UMUMAN ishlatilmaydi) ---
+        # fragment-api-lib 1.1.0+ (API v3) KYC'siz rejimda FAQAT seed bilan ishlaydi.
+        # To'lov to'g'ridan-to'g'ri ulangan TON hamyondan (W5) yechiladi.
+        # Cookie yo'li BUTUNLAY olib tashlangan: "invalid fragment_cookies" xatosi
+        # endi chiqmaydi va buy_stars_without_kyc ning ASL xatosi ko'rinadi.
         try:
             res = _call_flexible(
                 client.buy_stars_without_kyc,
                 username=uname, amount=stars, seed=seed,
                 payment_method=pay, wallet_type=wtype,
             )
-            ok, tx, err = _interpret_result(res)
-            if ok:
-                return DeliveryResult(ok=True, message="Fragment orqali yuborildi", tx_id=tx)
-            err_without_kyc = err
         except Exception as e:  # noqa: BLE001
-            err_without_kyc = str(e)
+            return DeliveryResult(ok=False, message=f"Fragment (without_kyc) xatolik: {e}")
 
-        # --- Zaxira: KYC (cookie bilan), agar cookie ulangan bo'lsa ---
-        if has_cookie:
-            cookie_str = _cookies_to_header(cookies)
-            res = _call_flexible(
-                client.buy_stars,
-                username=uname, amount=stars, fragment_cookies=cookie_str,
-                seed=seed, show_sender=False, payment_method=pay, wallet_type=wtype,
-            )
-            ok, tx, err = _interpret_result(res)
-            msg = "Fragment orqali yuborildi" if ok else f"Fragment rad etdi: {err or err_without_kyc or 'noma''lum'}"
-            return DeliveryResult(ok=ok, message=msg, tx_id=tx)
-
-        # Cookie yo'q va KYC'siz ham ishlamadi
-        return DeliveryResult(
-            ok=False,
-            message=f"Fragment rad etdi: {err_without_kyc or 'noma''lum sabab'}",
-        )
+        ok, tx, err = _interpret_result(res)
+        msg = "Fragment orqali yuborildi" if ok else f"Fragment rad etdi: {err or 'noma''lum sabab'}"
+        return DeliveryResult(ok=ok, message=msg, tx_id=tx)
 
     return await asyncio.to_thread(_run)
 
