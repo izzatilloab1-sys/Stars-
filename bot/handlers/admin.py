@@ -1124,11 +1124,33 @@ async def acc_balance(call: CallbackQuery):
     if not await is_admin(call.from_user.id):
         return
     await call.answer("⏳ Tekshirilmoqda...")
+    seed = (await fragment_service.get_wallet_seed()).strip()
+    if not seed:
+        await call.message.answer("❌ Avval hamyon seed'ini ulang (🔑 Hamyon seed).")
+        return
+    addr = await fragment_service.get_wallet_address()
     bal = await fragment_service.get_wallet_balance()
+    addr_line = f"\n📥 Manzil: <code>{addr}</code>" if addr else ""
+
     if bal is None:
-        await call.message.answer("❌ Balansni olishning iloji bo'lmadi (seed ulanmagan yoki tarmoq xatosi).")
+        await call.message.answer(
+            "⚠️ Balansni olishning iloji bo'lmadi (tarmoq yoki kutubxona xatosi)."
+            f"{addr_line}\n\nQayta urinib ko'ring."
+        )
+    elif bal == 0:
+        await call.message.answer(
+            f"💎 Ulangan hamyon balansi: <b>0 TON</b>{addr_line}\n\n"
+            f"ℹ️ Balans 0 bo'lsa, sabablari:\n"
+            f"• Hamyonda haqiqatan TON yo'q — manzilга TON yuboring\n"
+            f"• Seed noto'g'ri yoki boshqa hamyonniki (yuqoridagi manzilni "
+            f"tonviewer.com da tekshiring — sizning hamyoningizmi?)\n"
+            f"• Hamyon hali faollashtirilmagan (unga 1-tranzaksiya kelishi kerak)\n\n"
+            f"⚠️ Avto Stars sotib olish uchun hamyonда yetarli TON bo'lishi shart."
+        )
     else:
-        await call.message.answer(f"💎 Ulangan hamyon balansi: <b>{bal} TON</b>")
+        await call.message.answer(
+            f"💎 Ulangan hamyon balansi: <b>{bal} TON</b>{addr_line}"
+        )
 
 
 # ---------- Akkauntni uzish ----------

@@ -372,7 +372,70 @@ async def get_wallet_address(seed: str | None = None) -> str | None:
 
 
 async def get_wallet_balance() -> float | None:
-    """Ulangan hamyonning TON balansini qaytaradi (toncenter orqali)."""
+    """Ulangan hamyonning TON balansini qaytaradi.
+
+    Avval fragment-api-lib ning get_balance(seed) metodi (eng aniq — Fragment
+    ishlatadigan AYNI hamyonni biladi), keyin zaxira sifatida toncenter orqali
+    hamyon manzili balansi."""
+    seed = (await get_wallet_seed()).strip()
+    if not seed:
+        return None
+
+    # --- 1-usul: fragment-api-lib get_balance (eng aniq) ---
+    bal = await _balance_via_fragment_lib(seed)
+    if bal is not None:
+        return bal
+
+    # --- 2-usul (zaxira): toncenter addressInformation ---
+    return await _balance_via_toncenter()
+
+
+async def _balance_via_fragment_lib(seed: str) -> float | None:
+    """fragment-api-lib client.get_balance(seed) orqali TON balansi."""
+    def _run() -> float | None:
+        try:
+            from fragment_api_lib.client import FragmentAPIClient  # type: ignore
+        except ImportError:
+            return None
+        try:
+            client = FragmentAPIClient()
+            res = client.get_balance(seed=seed)
+            return _parse_balance(res)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("fragment-api-lib get_balance xato: %s", e)
+            return None
+
+    return await asyncio.to_thread(_run)
+
+
+def _parse_balance(res) -> float | None:
+    """get_balance javobidan TON summasini ajratadi (turli formatlar)."""
+    if res is None:
+        return None
+    # dict bo'lsa: balance / ton / amount / available maydonlarini qidiramiz
+    if isinstance(res, dict):
+        for key in ("balance", "ton", "amount", "available", "ton_balance"):
+            if key in res and res[key] is not None:
+                try:
+                    val = float(res[key])
+                    # nano-TON bo'lsa (juda katta son) -> TON ga aylantiramiz
+                    return round(val / 1e9, 4) if val > 1e6 else round(val, 4)
+                except (TypeError, ValueError):
+                    continue
+        # data ichida bo'lishi mumkin
+        if isinstance(res.get("data"), dict):
+            return _parse_balance(res["data"])
+        return None
+    # son bo'lsa
+    try:
+        val = float(res)
+        return round(val / 1e9, 4) if val > 1e6 else round(val, 4)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _balance_via_toncenter() -> float | None:
+    """toncenter v3 addressInformation orqali hamyon balansi (zaxira)."""
     import aiohttp
 
     addr = await get_wallet_address()
@@ -384,13 +447,17 @@ async def get_wallet_balance() -> float | None:
     try:
         async with aiohttp.ClientSession() as s:
             url = "https://toncenter.com/api/v3/addressInformation"
-            async with s.get(url, params={"address": addr}, headers=headers,
-                             timeout=aiohttp.ClientTimeout(total=10)) as r:
+            async with s.get(url, params={"address": addr, "use_v2": "false"},
+                             headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as r:
                 data = await r.json()
-                nano = int(data.get("balance", 0))
+                # v3 javobi: {"balance": "123456789", ...} yoki nested
+                raw = data.get("balance")
+                if raw is None and isinstance(data.get("result"), dict):
+                    raw = data["result"].get("balance")
+                nano = int(raw or 0)
                 return round(nano / 1e9, 4)
     except Exception as e:  # noqa: BLE001
-        logger.warning("Balansni olishda xatolik: %s", e)
+        logger.warning("toncenter balansni olishda xatolik: %s", e)
         return None
 
 
