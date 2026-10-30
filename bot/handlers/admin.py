@@ -671,6 +671,8 @@ async def _settings_text() -> str:
     threshold = await db.get_referral_task_threshold()
     withdraw_ch = await db.get_withdraw_channel_id()
     ton_rate = await db.get_ton_uzs_rate_setting()
+    card = await db.get_setting("card_number", settings.card_number)
+    bank_senders = await db.get_setting("bank_senders", settings.bank_senders)
     ref_line = (
         f"{ref_stars} ⭐ (Stars)" if ref_stars > 0
         else f"o'chirilgan (foizli rejim: {settings.referral_bonus_percent}%)"
@@ -685,6 +687,8 @@ async def _settings_text() -> str:
         f"👥 Referal bonusi (Stars): <b>{ref_line}</b>\n"
         f"🎯 Referal zadaniya chegarasi: <b>{threshold} ta</b>\n"
         f"💎 1 TON kursi: <b>{ton_line}</b>\n"
+        f"💵 Karta (avto to'lov): <b>{card or '— sozlanmagan'}</b>\n"
+        f"🏦 Bank yuboruvchilar: <b>{bank_senders or 'hamma'}</b>\n"
         f"💸 Yechib olish kanali: <b>{withdraw_ch or '—'}</b>\n\n"
         f"ℹ️ Narxni o'zgartirsangiz, barcha yangi buyurtmalar yangi narxda hisoblanadi.\n"
         f"Referal bonusi endi faqat <b>Stars</b> ko'rinishida (referrer bonus balansiga "
@@ -796,6 +800,83 @@ async def set_tonrate_save(message: Message, state: FSMContext):
         await message.answer(f"✅ TON kursi 1 TON = {int(value):,} so'm qilib o'rnatildi.")
     else:
         await message.answer("✅ TON kursi avtomatik (API) rejimiga qaytarildi.")
+    await message.answer(await _settings_text(), reply_markup=settings_menu())
+
+
+# ==================== AVTO KARTA TO'LOVI SOZLAMALARI ====================
+@router.callback_query(F.data == "set:card")
+async def set_card_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    current = await db.get_setting("card_number", settings.card_number)
+    holder = await db.get_setting("card_holder", settings.card_holder)
+    cur = f"\nHozirgi: <code>{current}</code>" + (f" ({holder})" if holder else "") if current else ""
+    await state.set_state(AdminState.set_card)
+    await call.message.answer(
+        "💵 <b>Karta raqami (avto to'lov)</b>\n\n"
+        "Pul tushadigan karta raqamini kiriting. Ixtiyoriy ravishda karta egasi "
+        "ismini ham qo'shishingiz mumkin (vergul bilan):\n"
+        "<code>8600 1234 5678 9012, Ism Familiya</code>"
+        f"{cur}"
+    )
+    await call.answer()
+
+
+@router.message(AdminState.set_card)
+async def set_card_save(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if "," in raw:
+        card, holder = raw.split(",", 1)
+        card, holder = card.strip(), holder.strip()
+    else:
+        card, holder = raw, ""
+    # karta raqamida kamida 12 ta raqam bo'lsin
+    digits = "".join(ch for ch in card if ch.isdigit())
+    if len(digits) < 12:
+        await message.answer("❌ Karta raqami noto'g'ri (kamida 12 raqam). Qayta kiriting:")
+        return
+    await db.set_setting("card_number", card)
+    await db.set_setting("card_holder", holder)
+    await state.clear()
+    from bot.keyboards.kb import settings_menu
+    await message.answer(
+        f"✅ Karta saqlandi: <code>{card}</code>" + (f" ({holder})" if holder else "")
+    )
+    await message.answer(await _settings_text(), reply_markup=settings_menu())
+
+
+@router.callback_query(F.data == "set:banksenders")
+async def set_banksenders_start(call: CallbackQuery, state: FSMContext):
+    if not await is_admin(call.from_user.id):
+        return
+    current = await db.get_setting("bank_senders", settings.bank_senders)
+    cur = f"\nHozirgi: <code>{current}</code>" if current else "\nHozir: HAMMA yuboruvchidan qabul qilinadi."
+    await state.set_state(AdminState.set_bank_senders)
+    await call.message.answer(
+        "🏦 <b>Bank yuboruvchilar (avto to'lov)</b>\n\n"
+        "Qaysi Telegram akkaunt/bot'lardan kelgan xabarlar hisobga olinsin? "
+        "Vergul bilan, @ belgisisiz kiriting (masalan: <code>ClickUz,payme,humocardbot</code>).\n\n"
+        "Bo'sh qoldirish uchun <code>-</code> yuboring — unda HAMMA yuboruvchidan "
+        "qabul qilinadi (summa + pending mosligi baribir tekshiriladi)."
+        f"{cur}"
+    )
+    await call.answer()
+
+
+@router.message(AdminState.set_bank_senders)
+async def set_banksenders_save(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    value = "" if raw == "-" else raw
+    await db.set_setting("bank_senders", value)
+    await state.clear()
+    from bot.keyboards.kb import settings_menu
+    await message.answer(
+        "✅ Bank yuboruvchilar saqlandi." + (f"\n<code>{value}</code>" if value else " (hamma yuboruvchi)")
+    )
     await message.answer(await _settings_text(), reply_markup=settings_menu())
 
 

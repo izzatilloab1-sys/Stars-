@@ -48,11 +48,33 @@ async def main() -> None:
     me = await bot.get_me()
     logger.info("Bot ishga tushdi: @%s", me.username)
 
+    # Avto karta to'lovi listener'ini fon vazifasi sifatida ishga tushiramiz.
+    # (Telegram akkaunt session'i ulanmagan bo'lsa, u jimgina chiqadi.)
+    from bot.services.payment_listener import start_payment_listener
+    listener_task = asyncio.create_task(start_payment_listener(bot))
+    cleanup_task = asyncio.create_task(_expire_card_topups_loop())
+
     await bot.delete_webhook(drop_pending_updates=True)
     try:
         await dp.start_polling(bot)
     finally:
+        listener_task.cancel()
+        cleanup_task.cancel()
         await bot.session.close()
+
+
+async def _expire_card_topups_loop() -> None:
+    """Muddati o'tgan karta to'lovlarini davriy tozalaydi (har 60 soniya)."""
+    while True:
+        try:
+            await asyncio.sleep(60)
+            n = await db.expire_old_card_topups()
+            if n:
+                logger.info("Muddati o'tgan %s ta karta to'lovi tozalandi.", n)
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001
+            logger.exception("Karta to'lovlarini tozalashda xatolik")
 
 
 if __name__ == "__main__":

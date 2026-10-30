@@ -87,6 +87,12 @@ async def _show_topup_methods(message, amount: int, edit: bool):
 async def topup_pay(call: CallbackQuery, state: FSMContext):
     _, method, amount_s = call.data.split(":")
     amount = int(amount_s)
+
+    # --- Karta (avto) — aniq noyob summa usuli ---
+    if method == "card":
+        await _start_card_topup(call, amount)
+        return
+
     topup = await db.create_topup(call.from_user.id, amount, method)
 
     if method == "ton":
@@ -121,6 +127,42 @@ async def topup_pay(call: CallbackQuery, state: FSMContext):
         f"1️⃣ «To'lash» tugmasini bosing\n"
         f"2️⃣ So'ng «Tekshirish» tugmasini bosing",
         reply_markup=check_payment_kb_topup(topup.id, url),
+    )
+    await call.answer()
+
+
+async def _start_card_topup(call: CallbackQuery, amount: int):
+    """Karta (avto): noyob summa beradi va 15 daqiqaga band qiladi."""
+    card = await db.get_setting("card_number", settings.card_number)
+    if not card:
+        await call.answer(
+            "Karta to'lovi hozircha sozlanmagan. Boshqa usulni tanlang yoki adminга yozing.",
+            show_alert=True,
+        )
+        return
+
+    ttl = settings.card_topup_minutes
+    topup = await db.create_card_topup(call.from_user.id, amount, ttl_minutes=ttl)
+    if topup is None:
+        await call.answer(
+            "Hozir tizim band. Iltimos, 1-2 daqiqadan so'ng qayta urinib ko'ring.",
+            show_alert=True,
+        )
+        return
+
+    holder = await db.get_setting("card_holder", settings.card_holder)
+    holder_line = f"\n👤 Karta egasi: <b>{holder}</b>" if holder else ""
+
+    await call.message.edit_text(
+        f"💵 <b>Karta orqali to'lov #{topup.id}</b>\n\n"
+        f"Kartaga <b>ROPPA-ROSA</b> quyidagi summani tashlang:\n\n"
+        f"💳 Karta: <code>{card}</code>{holder_line}\n"
+        f"💰 Aniq summa: <b>{topup.expected_amount:,} so'm</b>\n\n"
+        f"⚠️ <b>MUHIM:</b> Aynan <b>{topup.expected_amount:,} so'm</b> tashlang "
+        f"(izoh yozish SHART EMAS). Istalgan ilovadan (Click, Payme, Uzum, bank) "
+        f"to'lashingiz mumkin.\n\n"
+        f"⏳ Vaqtingiz: <b>{ttl} daqiqa</b>. Pul tushgach, hisobingizga "
+        f"<b>{topup.amount:,} so'm</b> avtomatik qo'shiladi — kutib turing.",
     )
     await call.answer()
 

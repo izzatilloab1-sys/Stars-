@@ -119,7 +119,11 @@ class Topup(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
-    amount: Mapped[int] = mapped_column(Integer)  # so'm
+    amount: Mapped[int] = mapped_column(Integer)  # balansga qo'shiladigan asosiy summa (so'm)
+    # Karta (avto) usuli uchun: kartaga aynan tashlanishi kerak bo'lgan NOYOB summa
+    # (asosiy summa + 1..99 so'm). Bank xabari shu summaga mos kelsa, to'lov topiladi.
+    expected_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.PENDING)
     payment_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

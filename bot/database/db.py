@@ -1,6 +1,9 @@
 """Ma'lumotlar bazasi bilan ishlash funksiyalari."""
 from __future__ import annotations
 
+import datetime as dt
+import random
+
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -336,6 +339,87 @@ async def get_topup_by_comment(comment: str) -> Topup | None:
     async with Session() as s:
         res = await s.execute(select(Topup).where(Topup.pay_comment == comment))
         return res.scalar_one_or_none()
+
+
+# ---------- Karta (avto) — noyob summa band qilish ----------
+async def create_card_topup(user_id: int, base_amount: int, ttl_minutes: int = 15) -> Topup | None:
+    """Karta (avto) uchun NOYOB summali topup yaratadi.
+
+    base_amount ga 1..99 so'm qo'shib, AYNI SHU DAQIQADA boshqa faol (PENDING,
+    muddati tugamagan) topup'da band bo'lmagan noyob summa tanlaydi. Shu summa
+    kartaga tashlanishi kerak — bank xabari shu summaga mos kelsa, to'lov topiladi.
+
+    Qaytaradi: Topup (expected_amount, expires_at bilan) yoki None (bo'sh summa
+    topilmasa — juda kam ehtimol)."""
+    now = dt.datetime.now(dt.timezone.utc)
+    expires = now + dt.timedelta(minutes=ttl_minutes)
+    async with Session() as s:
+        # Hozir band bo'lgan (faol) expected_amount'lar
+        res = await s.execute(
+            select(Topup.expected_amount).where(
+                Topup.payment_method == "card",
+                Topup.status == OrderStatus.PENDING,
+                Topup.expires_at > now,
+                Topup.expected_amount.is_not(None),
+            )
+        )
+        taken = {row[0] for row in res.all()}
+        # 1..99 oralig'idan bo'sh qo'shimchani tasodifiy tanlaymiz
+        candidates = list(range(1, 100))
+        random.shuffle(candidates)
+        chosen = None
+        for extra in candidates:
+            if (base_amount + extra) not in taken:
+                chosen = base_amount + extra
+                break
+        if chosen is None:
+            return None  # barcha 99 variant band (favqulodda holat)
+
+        t = Topup(
+            user_id=user_id,
+            amount=base_amount,            # balansga qo'shiladigan asosiy summa
+            expected_amount=chosen,         # kartaga tashlanadigan noyob summa
+            expires_at=expires,
+            payment_method="card",
+            status=OrderStatus.PENDING,
+        )
+        s.add(t)
+        await s.commit()
+        await s.refresh(t)
+        return t
+
+
+async def find_card_topup_by_amount(received_amount: int) -> Topup | None:
+    """Kartaga kelgan summa bo'yicha faol (PENDING, muddati tugamagan) karta
+    topup'ini topadi. Telethon listener shu funksiyani ishlatadi."""
+    now = dt.datetime.now(dt.timezone.utc)
+    async with Session() as s:
+        res = await s.execute(
+            select(Topup).where(
+                Topup.payment_method == "card",
+                Topup.status == OrderStatus.PENDING,
+                Topup.expected_amount == received_amount,
+                Topup.expires_at > now,
+            ).order_by(Topup.id.asc())
+        )
+        return res.scalars().first()
+
+
+async def expire_old_card_topups() -> int:
+    """Muddati tugagan faol karta topup'larini FAILED qiladi (tozalash)."""
+    now = dt.datetime.now(dt.timezone.utc)
+    async with Session() as s:
+        res = await s.execute(
+            update(Topup)
+            .where(
+                Topup.payment_method == "card",
+                Topup.status == OrderStatus.PENDING,
+                Topup.expires_at < now,
+            )
+            .values(status=OrderStatus.FAILED)
+        )
+        await s.commit()
+        return res.rowcount or 0
 
 
 # ---------- Settings (admin panel orqali sozlash) ----------

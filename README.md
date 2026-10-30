@@ -84,6 +84,9 @@ Shu sababli **eski** `stars_bot.db` da `User` ning yangi ustunlari
    ```sql
    ALTER TABLE users ADD COLUMN stars_balance INTEGER DEFAULT 0;
    ALTER TABLE users ADD COLUMN ref_bonus_given BOOLEAN DEFAULT 0;
+   -- Avto karta to'lovi uchun topups jadvaliga qo'shilgan ustunlar:
+   ALTER TABLE topups ADD COLUMN expected_amount INTEGER;
+   ALTER TABLE topups ADD COLUMN expires_at DATETIME;
    ```
    (Yangi jadvallar — `tasks`, `task_completions`, `withdrawals`, `required_channels` —
    `create_all` tomonidan avtomatik yaratiladi, qo'lda yaratish shart emas.)
@@ -176,8 +179,30 @@ versiyasi o'zgarsa, `_try_fragment_api` / `_try_pyfragment` dagi chaqiruvni mosl
 
 ### 💳 Balans to'ldirish
 Foydalanuvchi asosiy menyudan **💳 Balans to'ldirish** → summa (yoki tayyor summalar)
-→ to'lov usuli (TON / Click / Payme) tanlaydi. To'lov tasdiqlangach, so'm balansga
-qo'shiladi va keyin Stars sotib olishda ishlatiladi.
+→ to'lov usuli (**💵 Karta (avto)** yoki **💎 TON**) tanlaydi. To'lov tasdiqlangach,
+so'm balansga qo'shiladi va keyin Stars sotib olishda ishlatiladi.
+
+#### 💵 Avto karta to'lovi — "Aniq summa + Telegram bildirishnomasi" (tekin, webhook kerak emas)
+YTT/pullik xizmatsiz, 100% tekin usul:
+1. User summa tanlaydi (masalan 20 000 so'm).
+2. Bot **noyob summa** beradi: 20 000 + (1..99) = masalan **20 037 so'm**, va buni
+   15 daqiqaga band qiladi (`Topup`, `payment_method=card`, `expected_amount`).
+3. User **aynan 20 037 so'm**ni kartaga tashlaydi — izoh shart emas, **istalgan
+   ilovadan** (Click, Payme, Uzum, bank).
+4. Kartaga ulangan **Telegram akkaunt**ga bank bildirishnomasi keladi (@ClickUz,
+   @payme, @humocardbot, bank SMS→Telegram ...).
+5. `bot/services/payment_listener.py` (Telethon) o'sha xabarni tutadi, matndan
+   **kirim summasini** regex bilan ajratadi, mos pending to'lovni topib, userning
+   so'm balansini **avtomatik** oshiradi va "✅ To'lovingiz qabul qilindi" deb yozadi.
+
+**Ishlashi uchun:** `/admin → 🔗 Akkaunt ulash → 📱` orqali **kartaga ulangan**
+Telegram akkauntni ulang (yoki `.env` TG_SESSION), va `/admin → ⚙️ Sozlamalar`da
+**💵 Karta raqami** + ixtiyoriy **🏦 Bank yuboruvchilar** (ClickUz,payme,...) ni kiriting.
+Listener bot bilan bir process'da avtomatik ishga tushadi (session ulangan bo'lsa).
+
+> ⚠️ Faqat **KIRIM** xabarlari hisobga olinadi (chiqim/spisanie e'tiborga olinmaydi).
+> Summa noyob bo'lgani uchun bir vaqtda ikki kishi bir xil summa tashlashi deyarli
+> imkonsiz; kut vaqti o'tsa pending FAILED bo'ladi.
 
 ### 🎁 Hadya paketlari (15 / 25 / 50 ...)
 Stars sotib olishda @username kiritilgach, tayyor paketlar chiqadi: **15, 25, 50, 100,

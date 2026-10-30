@@ -62,9 +62,8 @@ def topup_amount_kb() -> InlineKeyboardMarkup:
 def topup_payment_kb(amount: int) -> InlineKeyboardMarkup:
     """Balans to'ldirish uchun to'lov usullari (bonus balanssiz)."""
     kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="💵 Karta (avto, so'm)", callback_data=f"tpay:card:{amount}"))
     kb.row(InlineKeyboardButton(text="💎 TON orqali", callback_data=f"tpay:ton:{amount}"))
-    kb.row(InlineKeyboardButton(text="💳 Click (so'm)", callback_data=f"tpay:click:{amount}"))
-    kb.row(InlineKeyboardButton(text="💳 Payme (so'm)", callback_data=f"tpay:payme:{amount}"))
     kb.row(InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel"))
     return kb.as_markup()
 
@@ -156,6 +155,8 @@ def settings_menu() -> InlineKeyboardMarkup:
     kb.row(InlineKeyboardButton(text="👥 Referal Stars sonini o'zgartirish", callback_data="set:refstars"))
     kb.row(InlineKeyboardButton(text="🎯 Referal zadaniya chegarasi", callback_data="set:refthreshold"))
     kb.row(InlineKeyboardButton(text="💎 TON kursi (1 TON = ? so'm)", callback_data="set:tonrate"))
+    kb.row(InlineKeyboardButton(text="💵 Karta raqami (avto to'lov)", callback_data="set:card"))
+    kb.row(InlineKeyboardButton(text="🏦 Bank yuboruvchilar (avto)", callback_data="set:banksenders"))
     kb.row(InlineKeyboardButton(text="💸 Yechib olish kanali", callback_data="adm:withdrawch"))
     kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:back"))
     return kb.as_markup()

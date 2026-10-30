@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     tg_api_hash: str = ""              # my.telegram.org dan
     tg_session: str = ""              # tayyor session string (ixtiyoriy, .env orqali)
 
+    # Avto karta to'lovi (Telethon listener)
+    card_number: str = ""              # pul tashlanadigan karta raqami (userga ko'rsatiladi)
+    card_holder: str = ""              # karta egasi ismi (ixtiyoriy)
+    # Qaysi yuboruvchilardan bank xabari qabul qilinsin (vergul bilan, @siz):
+    # masalan: ClickUz,payme,humocardbot  — bo'sh bo'lsa HAMMA yuboruvchidan
+    bank_senders: str = ""
+    card_topup_minutes: int = 15       # noyob summa amal qilish muddati (daqiqa)
+
     # TON to'lov (qabul qilish)
     ton_wallet_address: str = ""      # to'lovlar keladigan hamyon manzili
     usd_uzs_rate: float = 12800.0     # 1 USD = ? so'm (TON kursini hisoblash uchun)

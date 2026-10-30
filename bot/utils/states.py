@@ -48,5 +48,8 @@ class AdminState(StatesGroup):
     set_withdraw_channel = State()
     # TON kursi (1 TON = ? so'm)
     set_ton_rate = State()
+    # Avto karta to'lovi sozlamalari
+    set_card = State()
+    set_bank_senders = State()
     # Referal oversight (foydalanuvchi kimlarni chaqirganini ko'rish)
     view_referrals = State()
