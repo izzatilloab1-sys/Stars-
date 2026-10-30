@@ -952,19 +952,21 @@ async def _account_text(status: dict) -> str:
         f"✅ o'rnatilgan ({diag['lib_name']})" if c["lib_installed"]
         else "❌ o'rnatilmagan (pip install fragment-api)"
     )
+    cookie_opt = "✅ ulangan" if diag.get("cookie_set") else "➖ ulanmagan (ixtiyoriy)"
     if diag["ready"]:
         auto_status = (
             "🟢 <b>AVTOMATIK yetkazish TAYYOR</b>\n"
-            "Pul/TON tushganda Stars avtomatik yuboriladi."
+            "Pul/TON tushganda Stars avtomatik yuboriladi.\n"
+            f"🍪 Cookie: {cookie_opt} — KYC'siz rejimда shart emas."
         )
     else:
         auto_status = (
             "🔴 <b>Avtomatik yetkazish ISHLAMAYDI</b> — quyidagilarni to'g'rilang:\n"
             f"{'✅' if c['mode_fragment'] else '❌'} Rejim 'fragment' bo'lsin "
             f"(hozir: {status['mode']})\n"
-            f"{'✅' if c['seed_set'] else '❌'} Hamyon seed ulangan bo'lsin\n"
-            f"{'✅' if c['cookie_set'] else '❌'} Fragment cookie ulangan bo'lsin\n"
-            f"{'✅' if c['lib_installed'] else '❌'} Fragment kutubxonasi: {lib_line}"
+            f"{'✅' if c['seed_set'] else '❌'} Hamyon seed ulangan bo'lsin (v4r2/W5, faol, TON bor)\n"
+            f"{'✅' if c['lib_installed'] else '❌'} Fragment kutubxonasi: {lib_line}\n"
+            f"🍪 Cookie: {cookie_opt}"
         )
 
     return (

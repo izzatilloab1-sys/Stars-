@@ -147,11 +147,30 @@ async def _try_fragment_api_lib(username: str, stars: int, seed: str, cookies: d
 
         client = FragmentAPIClient()
         pay = settings.fragment_pay_currency.lower()  # "ton" | "usdt"
-        uname = username if username.startswith("@") else f"@{username}"
+        # Recipient search @ belgisisiz username kutadi -> @ ni OLIB TASHLAYMIZ
+        uname = username.lstrip("@")
         has_cookie = bool(cookies.get("stel_token"))
 
+        # --- Asosiy yo'l: KYC'siz (faqat seed) ---
+        # fragment-api-lib 1.1.0+ (API v3) KYC'siz rejimda FAQAT seed bilan ishlaydi,
+        # cookie UMUMAN kerak emas. "invalid fragment_cookies" xatosining oldini oladi.
+        err_without_kyc = None
+        try:
+            res = client.buy_stars_without_kyc(
+                username=uname,
+                amount=stars,
+                seed=seed,
+                payment_method=pay,
+            )
+            ok, tx, err = _interpret_result(res)
+            if ok:
+                return DeliveryResult(ok=True, message="Fragment orqali yuborildi", tx_id=tx)
+            err_without_kyc = err
+        except Exception as e:  # noqa: BLE001
+            err_without_kyc = str(e)
+
+        # --- Zaxira: KYC (cookie bilan), agar cookie ulangan bo'lsa ---
         if has_cookie:
-            # KYC rejim: cookie Header String ko'rinishida kerak
             cookie_str = _cookies_to_header(cookies)
             res = client.buy_stars(
                 username=uname,
@@ -161,19 +180,15 @@ async def _try_fragment_api_lib(username: str, stars: int, seed: str, cookies: d
                 show_sender=False,          # yuboruvchi (profil) ko'rinmasin
                 payment_method=pay,
             )
-        else:
-            # KYC'siz rejim: faqat faol TON hamyon (seed)
-            res = client.buy_stars_without_kyc(
-                username=uname,
-                amount=stars,
-                seed=seed,
-                payment_method=pay,
-            )
+            ok, tx, err = _interpret_result(res)
+            msg = "Fragment orqali yuborildi" if ok else f"Fragment rad etdi: {err or err_without_kyc or 'noma''lum'}"
+            return DeliveryResult(ok=ok, message=msg, tx_id=tx)
 
-        # Natijani talqin qilamiz (dict/obyekt)
-        ok, tx, err = _interpret_result(res)
-        msg = "Fragment orqali yuborildi" if ok else f"Fragment rad etdi: {err or 'noma''lum sabab'}"
-        return DeliveryResult(ok=ok, message=msg, tx_id=tx)
+        # Cookie yo'q va KYC'siz ham ishlamadi
+        return DeliveryResult(
+            ok=False,
+            message=f"Fragment rad etdi: {err_without_kyc or 'noma''lum sabab'}",
+        )
 
     return await asyncio.to_thread(_run)
 
@@ -399,15 +414,17 @@ async def auto_delivery_diagnostics() -> dict:
     cookies = await _fragment_cookies()
     lib = _fragment_lib_installed()
 
+    # Cookie endi MAJBURIY EMAS: fragment-api-lib 1.1.0+ KYC'siz rejimda faqat
+    # seed bilan ishlaydi. Shuning uchun 'ready' uchun cookie shart emas.
     checks = {
         "mode_fragment": mode == "fragment",
         "seed_set": bool(seed),
-        "cookie_set": bool(cookies.get("stel_token")),
         "lib_installed": lib is not None,
     }
     return {
         "mode": mode,
         "lib_name": lib,
         "checks": checks,
+        "cookie_set": bool(cookies.get("stel_token")),  # faqat ko'rsatish uchun (ixtiyoriy)
         "ready": all(checks.values()),
     }
