@@ -47,6 +47,8 @@ class Settings(BaseSettings):
 
     # Fragment to'lov valyutasi: ton | usdt (hamyondan nima yechiladi)
     fragment_pay_currency: str = "ton"
+    # Hamyon versiyasi: v4r2 | v5r1 (W5). Tonkeeper yangi hamyonlar odatda v5r1.
+    wallet_version: str = "v5r1"
 
     # Telegram akkaunt (Telethon) — telefon raqam orqali ulash uchun
     tg_api_id: int = 0                 # my.telegram.org dan

@@ -975,6 +975,7 @@ async def _account_text(status: dict) -> str:
         f"ulaysiz. Ulangandan so'ng bot SHU akkaunt va hamyondan foydalanib "
         f"pullik buyurtmalarga Stars'ni AVTOMATIK sotib oladi.\n\n"
         f"🔑 Hamyon seed: {seed}\n"
+        f"🪙 Hamyon versiyasi: <b>{'W5 (v5r1)' if status.get('wallet_version') == 'v5r1' else 'v4r2'}</b>\n"
         f"🍪 Fragment cookie: {cookie}\n"
         f"📥 Hamyon manzili: <code>{addr}</code>\n"
         f"⚙️ Rejim: {mode}\n\n"
@@ -1116,6 +1117,20 @@ async def acc_mode_toggle(call: CallbackQuery):
     status = await fragment_service.get_account_status()
     await call.message.edit_text(await _account_text(status), reply_markup=account_menu(status))
     await call.answer(f"Rejim: {new_mode}")
+
+
+# ---------- Hamyon versiyasini almashtirish (v4r2 <-> v5r1/W5) ----------
+@router.callback_query(F.data == "acc:wallet")
+async def acc_wallet_toggle(call: CallbackQuery):
+    if not await is_admin(call.from_user.id):
+        return
+    current = await fragment_service.get_wallet_version()
+    new_ver = "v4r2" if current == "v5r1" else "v5r1"
+    await db.set_setting("wallet_version", new_ver)
+    status = await fragment_service.get_account_status()
+    await call.message.edit_text(await _account_text(status), reply_markup=account_menu(status))
+    label = "W5 (v5r1)" if new_ver == "v5r1" else "v4r2"
+    await call.answer(f"Hamyon versiyasi: {label}")
 
 
 # ---------- Balansni tekshirish ----------

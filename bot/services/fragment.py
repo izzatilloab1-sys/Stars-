@@ -54,6 +54,12 @@ async def get_wallet_seed() -> str:
     return await _cfg("ton_wallet_mnemonic", settings.ton_wallet_mnemonic)
 
 
+async def get_wallet_version() -> str:
+    """Hamyon versiyasi: v4r2 | v5r1 (W5). DB -> .env."""
+    v = (await _cfg("wallet_version", settings.wallet_version)).strip().lower()
+    return v if v in ("v4r2", "v5r1") else "v5r1"
+
+
 async def _fragment_cookies() -> dict:
     return {
         "stel_token": await _cfg("fragment_stel_token", settings.fragment_stel_token),
@@ -89,6 +95,7 @@ async def _deliver_via_fragment(username: str, stars: int) -> DeliveryResult:
     """
     seed = (await get_wallet_seed()).strip()
     cookies = await _fragment_cookies()
+    wallet_version = await get_wallet_version()
 
     # Seed MAJBURIY (to'lov manbai). Cookie — ixtiyoriy (KYC rejimida kerak).
     if not seed:
@@ -96,7 +103,7 @@ async def _deliver_via_fragment(username: str, stars: int) -> DeliveryResult:
 
     # --- Adapter 1: fragment-api-lib (NightStrang6r) — aniq, asosiy ---
     try:
-        return await _try_fragment_api_lib(username, stars, seed, cookies)
+        return await _try_fragment_api_lib(username, stars, seed, cookies, wallet_version)
     except ImportError:
         logger.info("fragment-api-lib topilmadi, keyingi adapterni sinayman.")
     except Exception as e:  # noqa: BLE001
@@ -130,7 +137,9 @@ async def _deliver_via_fragment(username: str, stars: int) -> DeliveryResult:
     )
 
 
-async def _try_fragment_api_lib(username: str, stars: int, seed: str, cookies: dict) -> DeliveryResult:
+async def _try_fragment_api_lib(
+    username: str, stars: int, seed: str, cookies: dict, wallet_version: str = "v5r1"
+) -> DeliveryResult:
     """fragment-api-lib (NightStrang6r) — ANIQ interfeys.
 
         from fragment_api_lib.client import FragmentAPIClient
@@ -147,20 +156,20 @@ async def _try_fragment_api_lib(username: str, stars: int, seed: str, cookies: d
 
         client = FragmentAPIClient()
         pay = settings.fragment_pay_currency.lower()  # "ton" | "usdt"
+        wtype = wallet_version                         # "v4r2" | "v5r1" (W5)
         # Recipient search @ belgisisiz username kutadi -> @ ni OLIB TASHLAYMIZ
         uname = username.lstrip("@")
         has_cookie = bool(cookies.get("stel_token"))
 
         # --- Asosiy yo'l: KYC'siz (faqat seed) ---
         # fragment-api-lib 1.1.0+ (API v3) KYC'siz rejimda FAQAT seed bilan ishlaydi,
-        # cookie UMUMAN kerak emas. "invalid fragment_cookies" xatosining oldini oladi.
+        # cookie UMUMAN kerak emas. wallet_type orqali W5 (v5r1) hamyonni ko'rsatamiz.
         err_without_kyc = None
         try:
-            res = client.buy_stars_without_kyc(
-                username=uname,
-                amount=stars,
-                seed=seed,
-                payment_method=pay,
+            res = _call_flexible(
+                client.buy_stars_without_kyc,
+                username=uname, amount=stars, seed=seed,
+                payment_method=pay, wallet_type=wtype,
             )
             ok, tx, err = _interpret_result(res)
             if ok:
@@ -172,13 +181,10 @@ async def _try_fragment_api_lib(username: str, stars: int, seed: str, cookies: d
         # --- Zaxira: KYC (cookie bilan), agar cookie ulangan bo'lsa ---
         if has_cookie:
             cookie_str = _cookies_to_header(cookies)
-            res = client.buy_stars(
-                username=uname,
-                amount=stars,
-                fragment_cookies=cookie_str,
-                seed=seed,
-                show_sender=False,          # yuboruvchi (profil) ko'rinmasin
-                payment_method=pay,
+            res = _call_flexible(
+                client.buy_stars,
+                username=uname, amount=stars, fragment_cookies=cookie_str,
+                seed=seed, show_sender=False, payment_method=pay, wallet_type=wtype,
             )
             ok, tx, err = _interpret_result(res)
             msg = "Fragment orqali yuborildi" if ok else f"Fragment rad etdi: {err or err_without_kyc or 'noma''lum'}"
@@ -191,6 +197,24 @@ async def _try_fragment_api_lib(username: str, stars: int, seed: str, cookies: d
         )
 
     return await asyncio.to_thread(_run)
+
+
+def _call_flexible(func, **kwargs):
+    """Funksiyani chaqiradi; agar biror parametr (masalan wallet_type) qo'llab-
+    quvvatlanmasa (TypeError), uni olib tashlab qayta urinadi. Shunday qilib
+    kutubxona versiyasi wallet_type'ni bilmasa ham ishlaydi."""
+    import inspect
+    try:
+        sig = inspect.signature(func)
+        accepted = {k: v for k, v in kwargs.items() if k in sig.parameters}
+        return func(**accepted)
+    except (TypeError, ValueError):
+        # imzoni o'qib bo'lmasa — avval hammasi bilan, keyin wallet_type'siz
+        try:
+            return func(**kwargs)
+        except TypeError:
+            kwargs.pop("wallet_type", None)
+            return func(**kwargs)
 
 
 def _cookies_to_header(cookies: dict) -> str:
@@ -336,36 +360,60 @@ async def get_account_status() -> dict:
     tg_session = await db.get_setting("tg_session", settings.tg_session)
     tg_api_id = await db.get_setting("tg_api_id", str(settings.tg_api_id or ""))
     tg_api_hash = await db.get_setting("tg_api_hash", settings.tg_api_hash)
+    wallet_version = await get_wallet_version()
     return {
         "mode": mode,
         "seed_set": bool(seed),
         "seed_words": seed_words,
         "cookie_set": bool(cookies.get("stel_token")),
-        "wallet_address": await get_wallet_address(seed) if seed else None,
+        "wallet_version": wallet_version,
+        "wallet_address": await get_wallet_address(seed, wallet_version) if seed else None,
         "tg_set": bool(tg_session),
         "tg_api_set": bool(tg_api_id and tg_api_id != "0" and tg_api_hash),
     }
 
 
-async def get_wallet_address(seed: str | None = None) -> str | None:
-    """Seed'dan hamyon manzilini hisoblaydi (ko'rsatish uchun)."""
+async def get_wallet_address(seed: str | None = None, wallet_version: str | None = None) -> str | None:
+    """Seed'dan hamyon manzilini hisoblaydi (ko'rsatish uchun).
+
+    wallet_version: v4r2 | v5r1 (W5). Tonkeeper yangi hamyonlar odatda v5r1."""
     if seed is None:
         seed = (await get_wallet_seed()).strip()
     if not seed:
         return None
-    try:
-        import asyncio
+    if wallet_version is None:
+        wallet_version = await get_wallet_version()
 
-        def _run() -> str | None:
+    def _run() -> str | None:
+        try:
+            from tonutils.client import TonapiClient  # type: ignore
+        except ImportError:
+            return None
+        client = TonapiClient(api_key=settings.ton_api_key or "")
+        words = seed.split()
+        # Versiyaga mos wallet klassini tanlaymiz; topilmasa ikkalasini sinaymiz
+        candidates = []
+        try:
+            from tonutils.wallet import WalletV5R1  # type: ignore
+            candidates.append(("v5r1", WalletV5R1))
+        except ImportError:
+            pass
+        try:
+            from tonutils.wallet import WalletV4R2  # type: ignore
+            candidates.append(("v4r2", WalletV4R2))
+        except ImportError:
+            pass
+        # Avval so'ralgan versiyani, keyin qolganini sinaymiz
+        candidates.sort(key=lambda c: 0 if c[0] == wallet_version else 1)
+        for _, cls in candidates:
             try:
-                from tonutils.client import TonapiClient  # type: ignore
-                from tonutils.wallet import WalletV4R2  # type: ignore
-                client = TonapiClient(api_key=settings.ton_api_key or "")
-                wallet, _, _, _ = WalletV4R2.from_mnemonic(client, seed.split())
+                wallet, _, _, _ = cls.from_mnemonic(client, words)
                 return wallet.address.to_str()
             except Exception:  # noqa: BLE001
-                return None
+                continue
+        return None
 
+    try:
         return await asyncio.to_thread(_run)
     except Exception:  # noqa: BLE001
         return None
@@ -381,8 +429,10 @@ async def get_wallet_balance() -> float | None:
     if not seed:
         return None
 
-    # --- 1-usul: fragment-api-lib get_balance (eng aniq) ---
-    bal = await _balance_via_fragment_lib(seed)
+    wallet_version = await get_wallet_version()
+
+    # --- 1-usul: fragment-api-lib get_balance (eng aniq, W5'ni biladi) ---
+    bal = await _balance_via_fragment_lib(seed, wallet_version)
     if bal is not None:
         return bal
 
@@ -390,20 +440,31 @@ async def get_wallet_balance() -> float | None:
     return await _balance_via_toncenter()
 
 
-async def _balance_via_fragment_lib(seed: str) -> float | None:
-    """fragment-api-lib client.get_balance(seed) orqali TON balansi."""
+async def _balance_via_fragment_lib(seed: str, wallet_version: str = "v5r1") -> float | None:
+    """fragment-api-lib orqali TON balansi (wallet_type bilan — W5'ni qo'llaydi)."""
     def _run() -> float | None:
         try:
             from fragment_api_lib.client import FragmentAPIClient  # type: ignore
         except ImportError:
             return None
-        try:
-            client = FragmentAPIClient()
-            res = client.get_balance(seed=seed)
-            return _parse_balance(res)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("fragment-api-lib get_balance xato: %s", e)
-            return None
+        client = FragmentAPIClient()
+        # get_balance (seed) yoki get_balance_v2 (wallet_type) — qaysi biri ishlasa
+        for func, kwargs in (
+            (getattr(client, "get_balance", None), {"seed": seed, "wallet_type": wallet_version}),
+            (getattr(client, "get_balance_v2", None), {"seed": seed, "wallet_type": wallet_version}),
+            (getattr(client, "get_balance", None), {"seed": seed}),
+        ):
+            if func is None:
+                continue
+            try:
+                res = _call_flexible(func, **kwargs)
+                bal = _parse_balance(res)
+                if bal is not None:
+                    return bal
+            except Exception as e:  # noqa: BLE001
+                logger.warning("fragment-api-lib balans xato (%s): %s", wallet_version, e)
+                continue
+        return None
 
     return await asyncio.to_thread(_run)
 

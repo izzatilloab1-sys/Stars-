@@ -261,6 +261,9 @@ def account_menu(status: dict) -> InlineKeyboardMarkup:
     kb.row(InlineKeyboardButton(text=f"🍪 Fragment cookie {cookie_mark}", callback_data="acc:cookie"))
     mode_label = "fragment (avto)" if mode == "fragment" else "manual (qo'lda)"
     kb.row(InlineKeyboardButton(text=f"⚙️ Rejim: {mode_label}", callback_data="acc:mode"))
+    wv = status.get("wallet_version", "v5r1")
+    wv_label = "W5 (v5r1)" if wv == "v5r1" else "v4r2"
+    kb.row(InlineKeyboardButton(text=f"🪙 Hamyon versiyasi: {wv_label}", callback_data="acc:wallet"))
     kb.row(InlineKeyboardButton(text="💎 Balansni tekshirish", callback_data="acc:balance"))
     kb.row(InlineKeyboardButton(text="🗑 Akkauntni uzish", callback_data="acc:clear"))
     kb.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="adm:back"))
