@@ -431,13 +431,21 @@ async def get_wallet_balance() -> float | None:
 
     wallet_version = await get_wallet_version()
 
-    # --- 1-usul: fragment-api-lib get_balance (eng aniq, W5'ni biladi) ---
+    # --- 1-usul: fragment-api-lib get_balance (W5'ni biladi) ---
+    # DIQQAT: kutubxona ba'zan xato tufayli 0.0 qaytaradi (None emas). Shuning uchun
+    # faqat MUSBAT (>0) qiymatni ishonchli deb qabul qilamiz; 0 yoki None bo'lsa
+    # toncenter zaxirasiga o'tamiz (u haqiqiy balansni aniq beradi).
     bal = await _balance_via_fragment_lib(seed, wallet_version)
-    if bal is not None:
+    if bal is not None and bal > 0:
         return bal
 
-    # --- 2-usul (zaxira): toncenter addressInformation ---
-    return await _balance_via_toncenter()
+    # --- 2-usul (zaxira, ishonchli): toncenter addressInformation ---
+    ton_bal = await _balance_via_toncenter()
+    if ton_bal is not None:
+        return ton_bal
+
+    # toncenter ham bo'lmasa, lib qaytargan qiymat (0.0) ni qaytaramiz
+    return bal
 
 
 async def _balance_via_fragment_lib(seed: str, wallet_version: str = "v5r1") -> float | None:
