@@ -863,15 +863,39 @@ async def _account_text(status: dict) -> str:
     cookie = "✅ ulangan" if status["cookie_set"] else "❌ ulanmagan"
     addr = status.get("wallet_address") or "—"
     mode = "🟢 fragment (avtomatik)" if status["mode"] == "fragment" else "🟡 manual (qo'lda)"
+
+    # Avto yetkazish diagnostikasi — nima yetishmayotganini ko'rsatadi
+    diag = await fragment_service.auto_delivery_diagnostics()
+    c = diag["checks"]
+    lib_line = (
+        f"✅ o'rnatilgan ({diag['lib_name']})" if c["lib_installed"]
+        else "❌ o'rnatilmagan (pip install fragment-api)"
+    )
+    if diag["ready"]:
+        auto_status = (
+            "🟢 <b>AVTOMATIK yetkazish TAYYOR</b>\n"
+            "Pul/TON tushganda Stars avtomatik yuboriladi."
+        )
+    else:
+        auto_status = (
+            "🔴 <b>Avtomatik yetkazish ISHLAMAYDI</b> — quyidagilarni to'g'rilang:\n"
+            f"{'✅' if c['mode_fragment'] else '❌'} Rejim 'fragment' bo'lsin "
+            f"(hozir: {status['mode']})\n"
+            f"{'✅' if c['seed_set'] else '❌'} Hamyon seed ulangan bo'lsin\n"
+            f"{'✅' if c['cookie_set'] else '❌'} Fragment cookie ulangan bo'lsin\n"
+            f"{'✅' if c['lib_installed'] else '❌'} Fragment kutubxonasi: {lib_line}"
+        )
+
     return (
         f"🔗 <b>Akkaunt ulash</b>\n\n"
         f"Bu yerda Fragment akkauntingizni (cookie) va TON hamyoningizni (seed) "
         f"ulaysiz. Ulangandan so'ng bot SHU akkaunt va hamyondan foydalanib "
-        f"Stars'ni avtomatik sotib oladi.\n\n"
+        f"pullik buyurtmalarga Stars'ni AVTOMATIK sotib oladi.\n\n"
         f"🔑 Hamyon seed: {seed}\n"
         f"🍪 Fragment cookie: {cookie}\n"
         f"📥 Hamyon manzili: <code>{addr}</code>\n"
         f"⚙️ Rejim: {mode}\n\n"
+        f"{auto_status}\n\n"
         f"⚠️ <b>Diqqat:</b> seed va cookie — maxfiy ma'lumot. Ularni faqat o'zingiz "
         f"ishonadigan botga kiriting."
     )

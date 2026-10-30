@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # Fragment / Stars yetkazish
     ton_wallet_mnemonic: str = ""      # TON hamyon seed (12/24 so'z) — to'lov shundan
     ton_api_key: str = ""
-    fragment_mode: str = "manual"      # manual | fragment
+    fragment_mode: str = "fragment"    # manual | fragment (default: avtomatik)
 
     # Fragment cookie'lari (fragment.com'ga login qilgach brauzerdan olinadi)
     fragment_stel_token: str = ""

@@ -164,43 +164,59 @@ async def check_payment(call: CallbackQuery):
 
 # ---------- Yetkazish ----------
 async def _deliver_and_finish(bot: Bot, order_id: int):
-    """To'langan buyurtmani yetkazadi.
+    """To'langan buyurtmani YETKAZADI — pullik sotib olish AVTOMATIK (Fragment orqali).
 
-    Eslatma: referal bonusi FAQAT Stars ko'rinishida va referal belgilangan
-    sonli zadaniyani bajargach beriladi (bot.database.db.maybe_reward_referrer_for_tasks,
-    'Stars ishlash' oqimida chaqiriladi). Shuning uchun bu yerda eski so'm asosidagi
-    apply_referral_bonus CHAQIRILMAYDI — aks holda referrer ikki marta mukofotlanardi.
+    Oqim:
+      - FRAGMENT_MODE=fragment bo'lsa: bot Fragment'dan avtomatik Stars sotib olib
+        mijozga yuboradi. Muvaffaqiyatli -> DONE. Xato -> FAILED + adminga aniq sabab.
+      - FRAGMENT_MODE=manual bo'lsa (avto o'chirilgan): adminга zayafka tushadi,
+        admin qo'lda yetkazadi.
+
+    Eslatma: referal bonusi FAQAT Stars ko'rinishida va referal belgilangan sonli
+    zadaniyani bajargach beriladi ('Stars ishlash' oqimida). Bu yerda apply_referral_bonus
+    CHAQIRILMAYDI.
     """
+    from bot.services.fragment import get_fragment_mode
+
     order = await db.get_order(order_id)
     if not order:
         return
 
     await db.set_order_status(order_id, OrderStatus.DELIVERING)
+    mode = await get_fragment_mode()
     delivery = await deliver_stars(order.target_username, order.stars)
 
+    # --- Muvaffaqiyatli avtomatik yetkazish ---
     if delivery.ok:
         await db.set_order_status(order_id, OrderStatus.DONE, payment_id=delivery.tx_id)
         try:
             await bot.send_message(
                 order.user_id,
                 f"🎉 Buyurtma #{order_id} bajarildi!\n"
-                f"⭐ {order.stars:,} Stars @{order.target_username} ga yuborildi.",
+                f"⭐ {order.stars:,} Stars @{order.target_username} ga avtomatik yuborildi.",
                 reply_markup=main_menu(),
             )
         except Exception:  # noqa: BLE001
             pass
-    else:
-        # manual rejim yoki xatolik -> adminga yuboramiz
+        return
+
+    # --- Avto rejim yoqilgan, lekin yetkazish MUVAFFAQIYATSIZ (xatolik) ---
+    if mode == "fragment":
+        await db.set_order_status(order_id, OrderStatus.FAILED)
+        logger.error("Avto yetkazish FAILED #%s: %s", order_id, delivery.message)
         for admin_id in settings.admin_id_list:
             try:
                 await bot.send_message(
                     admin_id,
-                    f"🚚 <b>Yangi yetkazish</b>\n"
-                    f"Buyurtma #{order_id}\n"
+                    f"⚠️ <b>AVTO YETKAZISH XATOLIGI</b>\n"
+                    f"Buyurtma #{order_id} — to'lov o'tdi, lekin Fragment orqali "
+                    f"avtomatik yuborib bo'lmadi.\n\n"
                     f"⭐ {order.stars:,} Stars → @{order.target_username}\n"
                     f"👤 Mijoz: <code>{order.user_id}</code>\n"
                     f"💵 {order.amount:,} so'm\n\n"
-                    f"ℹ️ {delivery.message}",
+                    f"❌ Sabab: {delivery.message}\n\n"
+                    f"Tekshiring: hamyon balansi / Fragment cookie / seed / kutubxona. "
+                    f"Vaqtincha qo'lda yetkazishingiz mumkin:",
                     reply_markup=admin_delivery_kb(order_id),
                 )
             except Exception:  # noqa: BLE001
@@ -208,9 +224,34 @@ async def _deliver_and_finish(bot: Bot, order_id: int):
         try:
             await bot.send_message(
                 order.user_id,
-                f"⏳ Buyurtma #{order_id} qabul qilindi va tez orada yetkaziladi. "
-                f"Rahmat!",
+                f"⏳ Buyurtma #{order_id} to'landi. Stars tez orada yetkaziladi "
+                f"(texnik tekshiruv). Rahmat!",
                 reply_markup=main_menu(),
             )
         except Exception:  # noqa: BLE001
             pass
+        return
+
+    # --- Manual rejim (avto o'chirilgan) -> admin qo'lda yetkazadi ---
+    for admin_id in settings.admin_id_list:
+        try:
+            await bot.send_message(
+                admin_id,
+                f"🚚 <b>Yangi yetkazish (qo'lda rejim)</b>\n"
+                f"Buyurtma #{order_id}\n"
+                f"⭐ {order.stars:,} Stars → @{order.target_username}\n"
+                f"👤 Mijoz: <code>{order.user_id}</code>\n"
+                f"💵 {order.amount:,} so'm\n\n"
+                f"ℹ️ Avto rejim o'chirilgan (FRAGMENT_MODE=manual).",
+                reply_markup=admin_delivery_kb(order_id),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        await bot.send_message(
+            order.user_id,
+            f"⏳ Buyurtma #{order_id} qabul qilindi va tez orada yetkaziladi. Rahmat!",
+            reply_markup=main_menu(),
+        )
+    except Exception:  # noqa: BLE001
+        pass

@@ -137,13 +137,26 @@ python -m bot.webhook       # callback server (0.0.0.0:8080)
 
 ## 🚚 Stars yetkazish rejimlari
 
-### `manual` — qo'lda (kalit kerak emas)
-To'lovdan so'ng adminga xabar keladi. Admin Fragment'da qo'lda yuboradi va botda
-**«✅ Yetkazdim»** tugmasini bosadi.
+> **MUHIM — ikki xil Stars oqimi:**
+> - 💰 **Pul/TON bilan SOTIB OLISH → AVTOMATIK** (Fragment orqali, `fragment` rejim). Bot o'zi sotib olib yuboradi.
+> - 🎁 **Bonus/ishlangan Stars YECHIB OLISH → QO'LDA** (ruchnoy). Bu Fragment'ga ulanmaydi; admin kanalga zayafka tushadi, Stars'ni admin o'zi tashlaydi. (`💸 Yechib olish` bo'limiga qarang.)
 
-### `fragment` — avtomatik (Fragment'dan o'zi sotib oladi) ⭐
-Bot sizning **Fragment cookie'laringiz** va **TON hamyon seed'ingiz** orqali
-Fragment.com'dan Stars'ni avtomatik sotib olib, foydalanuvchiga yetkazadi.
+### `fragment` — avtomatik sotib olish (DEFAULT) ⭐
+Bu **default rejim**. Pullik buyurtma to'langach, bot **Fragment'dan avtomatik** Stars
+sotib olib foydalanuvchiga yuboradi — admin aralashmaydi.
+
+**Avtomatik ishlashi uchun 4 shart** (admin panel → 🔗 Akkaunt ulash da holat ko'rinadi):
+1. ✅ Rejim = `fragment`
+2. ✅ TON hamyon seed ulangan (hamyonda yetarli TON bo'lsin)
+3. ✅ Fragment kutubxonasi o'rnatilgan (`pip install fragment-api-lib`)
+4. 🍪 Fragment cookie — faqat **KYC rejimida** kerak (KYC'siz rejimda faqat faol TON hamyon yetarli)
+
+Biror shart bajarilmasa, admin panelда 🔴 belgi bilan ko'rsatiladi va to'lov o'tgach
+adminga aniq sabab bilan xabar keladi (buyurtma yo'qolmaydi).
+
+### `manual` — qo'lda (avto o'chirilgan)
+Agar avto rejimni o'chirsangiz: to'lovdan so'ng adminga xabar keladi, admin qo'lda
+yuboradi va **«✅ Yetkazdim»** bosadi.
 
 **Qanday ishlaydi (hamyondan TON/USDT qanday yechiladi):**
 1. Bot Fragment'ga «@user'ga N Stars» buyurtmasini beradi (cookie bilan login holatida).

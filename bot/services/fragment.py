@@ -79,18 +79,20 @@ async def deliver_stars(target_username: str, stars: int) -> DeliveryResult:
 
 
 async def _deliver_via_fragment(username: str, stars: int) -> DeliveryResult:
-    """Fragment cookie + TON seed orqali avtomatik Stars sotib oladi.
+    """TON seed (va ixtiyoriy Fragment cookie) orqali avtomatik Stars sotib oladi.
+
+    Eslatma: ba'zi kutubxonalar (masalan fragment-api-lib) KYC'SIZ rejimda
+    faqat FAOL TON hamyon (seed) bilan ishlaydi — cookie shart emas. KYC rejimда
+    cookie ham kerak. Shuning uchun cookie majburiy emas; faqat seed majburiy.
 
     Mavjud kutubxonalardan birini sinab ko'radi. Buy xatosiz o'tsa -> ok=True.
     """
     seed = (await get_wallet_seed()).strip()
     cookies = await _fragment_cookies()
 
-    # Zarur sozlamalar borligini tekshiramiz
+    # Seed MAJBURIY (to'lov manbai). Cookie — ixtiyoriy (KYC rejimida kerak).
     if not seed:
         return DeliveryResult(ok=False, message="Hamyon seed sozlanmagan (admin panel yoki .env).")
-    if not cookies.get("stel_token"):
-        return DeliveryResult(ok=False, message="Fragment cookie'lari sozlanmagan (admin panel yoki .env).")
 
     # --- Adapter 1: fragment-api (S1qwy/fragment-api-py oilasidagi sinxron klient) ---
     try:
@@ -135,24 +137,57 @@ async def _try_fragment_api(username: str, stars: int, seed: str, cookies: dict)
         except ImportError:
             from fragment_api_py import FragmentAPI  # type: ignore  # muqobil paket nomi
 
-        api = FragmentAPI(cookies=cookies, seed=seed.split())
-        # payment_method: hamyondan TON yoki USDT yechiladi
+        seed_words = seed.split()
+        # Klientni yaratish — cookie'li va cookie'siz (KYC'siz) rejimni sinaymiz
+        has_cookie = bool(cookies.get("stel_token"))
+        api = None
+        for kwargs in (
+            ({"cookies": cookies, "seed": seed_words} if has_cookie else None),
+            {"seed": seed_words},              # KYC'siz: faqat seed
+            {"seed": seed},                     # seed string ko'rinishida
+        ):
+            if kwargs is None:
+                continue
+            try:
+                api = FragmentAPI(**kwargs)
+                break
+            except TypeError:
+                continue
+        if api is None:
+            api = FragmentAPI(seed=seed_words)
+
         pay = settings.fragment_pay_currency.lower()  # "ton" | "usdt"
-        try:
-            res = api.buy_stars(username=username, amount=stars, payment_method=pay)
-        except TypeError:
-            # eski versiyalarda payment_method parametri bo'lmasligi mumkin
-            res = api.buy_stars(username=username, amount=stars)
-        # res formati kutubxonaga bog'liq: dict yoki obyekt bo'lishi mumkin
-        tx = None
-        ok = True
+        # buy_stars'ni turli parametr kombinatsiyalari bilan sinaymiz
+        # (account_index — 12 so'zli seed uchun ba'zi kutubxonalarда kerak)
+        res = None
+        last_err: Exception | None = None
+        attempts = [
+            {"username": username, "amount": stars, "payment_method": pay, "account_index": 0},
+            {"username": username, "amount": stars, "payment_method": pay},
+            {"username": username, "amount": stars},
+        ]
+        for kw in attempts:
+            try:
+                res = api.buy_stars(**kw)
+                break
+            except TypeError as e:
+                last_err = e
+                continue
+        if res is None:
+            raise last_err or RuntimeError("buy_stars chaqirib bo'lmadi (interfeys mos emas)")
+
+        # Natija formati kutubxonaga bog'liq: dict yoki obyekt
+        tx, ok, err = None, True, None
         if isinstance(res, dict):
-            ok = bool(res.get("ok", True))
+            ok = bool(res.get("ok", res.get("success", True)))
             tx = res.get("tx_hash") or res.get("hash") or res.get("transaction")
+            err = res.get("error") or res.get("message")
         else:
             tx = getattr(res, "tx_hash", None) or getattr(res, "hash", None)
-            ok = getattr(res, "ok", True)
-        return DeliveryResult(ok=ok, message="Fragment orqali yuborildi" if ok else "Fragment rad etdi", tx_id=tx)
+            ok = getattr(res, "ok", getattr(res, "success", True))
+            err = getattr(res, "error", None)
+        msg = "Fragment orqali yuborildi" if ok else f"Fragment rad etdi: {err or 'noma''lum sabab'}"
+        return DeliveryResult(ok=ok, message=msg, tx_id=tx)
 
     return await asyncio.to_thread(_run)
 
@@ -248,3 +283,37 @@ async def get_wallet_balance() -> float | None:
     except Exception as e:  # noqa: BLE001
         logger.warning("Balansni olishda xatolik: %s", e)
         return None
+
+
+def _fragment_lib_installed() -> str | None:
+    """O'rnatilgan Fragment kutubxonasi nomini qaytaradi (yoki None)."""
+    for name in ("fragment_api", "fragment_api_py", "pyfragment"):
+        try:
+            __import__(name)
+            return name
+        except ImportError:
+            continue
+    return None
+
+
+async def auto_delivery_diagnostics() -> dict:
+    """Avtomatik yetkazish uchun barcha shartlarni tekshiradi.
+
+    Qaytaradi: har bir shart holati + umumiy 'ready' (tayyormi)."""
+    mode = await get_fragment_mode()
+    seed = (await get_wallet_seed()).strip()
+    cookies = await _fragment_cookies()
+    lib = _fragment_lib_installed()
+
+    checks = {
+        "mode_fragment": mode == "fragment",
+        "seed_set": bool(seed),
+        "cookie_set": bool(cookies.get("stel_token")),
+        "lib_installed": lib is not None,
+    }
+    return {
+        "mode": mode,
+        "lib_name": lib,
+        "checks": checks,
+        "ready": all(checks.values()),
+    }
